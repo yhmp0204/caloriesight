@@ -1,11 +1,11 @@
 /**
- * OpenFoodFacts API を使ったバーコード商品検索
+ * OpenFoodFacts API を使った食品検索
  * 完全無料・オープンソースの食品データベース
  */
 
 import type { FoodItem } from '../types';
 
-const API_BASE = 'https://world.openfoodfacts.org/api/v2/product';
+const API_BASE = 'https://world.openfoodfacts.org';
 
 interface OFFNutriments {
   'energy-kcal_100g'?: number;
@@ -23,11 +23,11 @@ interface OFFProduct {
   categories_tags?: string[];
 }
 
+// ── バーコード検索 ──
 export async function lookupBarcode(barcode: string): Promise<FoodItem | null> {
   try {
     const response = await fetch(
-      `${API_BASE}/${barcode}?fields=product_name,product_name_ja,nutriments,serving_size,quantity,categories_tags`,
-      { headers: { 'User-Agent': 'CalorieSight/0.2 (contact@example.com)' } }
+      `${API_BASE}/api/v2/product/${barcode}?fields=product_name,product_name_ja,nutriments,serving_size,quantity,categories_tags`
     );
 
     if (!response.ok) return null;
@@ -35,30 +35,57 @@ export async function lookupBarcode(barcode: string): Promise<FoodItem | null> {
     const data = await response.json();
     if (data.status !== 1 || !data.product) return null;
 
-    const product: OFFProduct = data.product;
-    const n = product.nutriments || {};
-
-    // 商品名（日本語優先）
-    const name = product.product_name_ja || product.product_name || 'Unknown Product';
-
-    // 100gあたりの栄養素（OpenFoodFactsは100gベース）
-    // サービングサイズがあればそれを使い、なければ100g想定
-    const servingG = parseServingSize(product.serving_size) || 100;
-    const ratio = servingG / 100;
-
-    const cal = Math.round((n['energy-kcal_100g'] || 0) * ratio);
-    const p = Math.round((n['proteins_100g'] || 0) * ratio);
-    const f = Math.round((n['fat_100g'] || 0) * ratio);
-    const c = Math.round((n['carbohydrates_100g'] || 0) * ratio);
-
-    // カテゴリからemoji推定
-    const emoji = guessEmoji(product.categories_tags || []);
-
-    return { name, cal, p, f, c, cat: '商品', emoji };
+    return parseProduct(data.product);
   } catch (error) {
-    console.error('OpenFoodFacts lookup failed:', error);
+    console.error('OpenFoodFacts barcode lookup failed:', error);
     return null;
   }
+}
+
+// ── 商品名テキスト検索 ──
+export async function searchByName(query: string): Promise<FoodItem[]> {
+  if (!query || query.length < 2) return [];
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=10&fields=product_name,product_name_ja,nutriments,serving_size,categories_tags`
+    );
+
+    if (!response.ok) return [];
+
+    const data = await response.json();
+    if (!data.products || !Array.isArray(data.products)) return [];
+
+    const results: FoodItem[] = [];
+    for (const product of data.products) {
+      const item = parseProduct(product);
+      if (item && item.cal > 0) {
+        results.push(item);
+      }
+    }
+    return results;
+  } catch (error) {
+    console.error('OpenFoodFacts search failed:', error);
+    return [];
+  }
+}
+
+// ── 共通パース処理 ──
+function parseProduct(product: OFFProduct): FoodItem | null {
+  const n = product.nutriments || {};
+  const name = product.product_name_ja || product.product_name;
+  if (!name) return null;
+
+  const servingG = parseServingSize(product.serving_size) || 100;
+  const ratio = servingG / 100;
+
+  const cal = Math.round((n['energy-kcal_100g'] || 0) * ratio);
+  const p = Math.round((n['proteins_100g'] || 0) * ratio);
+  const f = Math.round((n['fat_100g'] || 0) * ratio);
+  const c = Math.round((n['carbohydrates_100g'] || 0) * ratio);
+  const emoji = guessEmoji(product.categories_tags || []);
+
+  return { name, cal, p, f, c, cat: '商品', emoji };
 }
 
 function parseServingSize(serving?: string): number | null {

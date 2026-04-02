@@ -17,25 +17,86 @@ export function calcTDEE(p: UserProfile): number {
 }
 
 /**
- * 日々の目標摂取カロリー
- * 目標体重と期限から自動計算（1日の赤字上限500kcal）
+ * 目標期限に間に合わせるための目標摂取カロリー（制限なし）
+ * ※現実的でない値になることがある
+ */
+export function calcRawDailyTarget(p: UserProfile): number {
+  if (!p.targetWeight || !p.targetDate || !p.weight) return calcTDEE(p);
+  const daysLeft = Math.max(1, (new Date(p.targetDate).getTime() - Date.now()) / 86400000);
+  const kgToLose = p.weight - p.targetWeight;
+  if (kgToLose <= 0) return calcTDEE(p);
+  const dailyDeficit = (kgToLose * 7700) / daysLeft;
+  return Math.round(calcTDEE(p) - dailyDeficit);
+}
+
+/**
+ * 健康セーフの目標摂取カロリー（1日の赤字上限500kcal）
+ * ダッシュボードの日常管理にはこちらを使用
  */
 export function calcDailyTarget(p: UserProfile): number {
   if (!p.targetWeight || !p.targetDate || !p.weight) return calcTDEE(p);
-
   const daysLeft = Math.max(1, (new Date(p.targetDate).getTime() - Date.now()) / 86400000);
   const kgToLose = p.weight - p.targetWeight;
-
-  if (kgToLose <= 0) return calcTDEE(p); // 増量目標の場合はTDEEそのまま
-
-  // 1kg = 7,700kcal の赤字が必要。1日の赤字上限は500kcal（安全ガード）
+  if (kgToLose <= 0) return calcTDEE(p);
   const dailyDeficit = Math.min(500, (kgToLose * 7700) / daysLeft);
   return Math.round(calcTDEE(p) - dailyDeficit);
 }
 
 /**
+ * 健康ペース（-500kcal/日）で減量した場合の推定到達日
+ */
+export function calcSafeEstimatedDate(p: UserProfile): string | null {
+  if (!p.targetWeight || !p.weight) return null;
+  const kgToLose = p.weight - p.targetWeight;
+  if (kgToLose <= 0) return null;
+  const daysNeeded = (kgToLose * 7700) / 500;
+  const target = new Date();
+  target.setDate(target.getDate() + Math.ceil(daysNeeded));
+  return target.toISOString().slice(0, 10);
+}
+
+/**
+ * 目標設定の危険度判定
+ */
+export function assessGoalSafety(p: UserProfile): {
+  level: 'safe' | 'caution' | 'danger';
+  message: string;
+  weeklyLoss: number;
+} {
+  if (!p.targetWeight || !p.targetDate || !p.weight) {
+    return { level: 'safe', message: '', weeklyLoss: 0 };
+  }
+  const daysLeft = Math.max(1, (new Date(p.targetDate).getTime() - Date.now()) / 86400000);
+  const kgToLose = p.weight - p.targetWeight;
+  if (kgToLose <= 0) return { level: 'safe', message: '', weeklyLoss: 0 };
+
+  const weeklyLoss = (kgToLose / daysLeft) * 7;
+  const rawTarget = calcRawDailyTarget(p);
+  const bmr = calcBMR(p);
+
+  if (rawTarget < bmr || weeklyLoss > 1.0) {
+    return {
+      level: 'danger',
+      message: `週${weeklyLoss.toFixed(1)}kgペースは体に負担がかかります。期限の延長をおすすめします。`,
+      weeklyLoss,
+    };
+  }
+  if (weeklyLoss > 0.5) {
+    return {
+      level: 'caution',
+      message: `週${weeklyLoss.toFixed(1)}kgペースはやや速めです。体調を見ながら進めましょう。`,
+      weeklyLoss,
+    };
+  }
+  return {
+    level: 'safe',
+    message: `週${weeklyLoss.toFixed(1)}kgペースは健康的な範囲です。`,
+    weeklyLoss,
+  };
+}
+
+/**
  * 運動消費カロリー (METs)
- * 消費kcal = METs × 体重(kg) × 時間(h)
  */
 export function calcExerciseCalories(
   mets: number,

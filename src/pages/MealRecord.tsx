@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, addMeal } from '../data/db';
 import { FOOD_DB, FOOD_CATEGORIES } from '../data/foods';
 import { recognizeFood, getApiKeyStatus } from '../services/vision';
+import { searchByName } from '../services/barcode';
 import { today } from '../utils/date';
 import type { UserProfile, MealType, FoodItem, AIRecognitionResult } from '../types';
 
@@ -20,8 +21,10 @@ function simulateAI(): AIRecognitionResult[] {
 
 interface Props { profile: UserProfile; }
 
+type Mode = 'home'|'camera'|'aiResult'|'search'|'confirm'|'manual'|'apiSearch';
+
 export default function MealScreen({ profile }: Props) {
-  const [mode, setMode] = useState<'home'|'camera'|'aiResult'|'search'|'confirm'>('home');
+  const [mode, setMode] = useState<Mode>('home');
   const [mealType, setMealType] = useState<MealType>('lunch');
   const [sel, setSel] = useState<(FoodItem & {confidence?:number})|null>(null);
   const [search, setSearch] = useState('');
@@ -29,35 +32,60 @@ export default function MealScreen({ profile }: Props) {
   const [aiRes, setAiRes] = useState<AIRecognitionResult[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [catF, setCatF] = useState('ALL');
-  const [photoFile, setPhotoFile] = useState<File|null>(null);
+
+  // Manual input state
+  const [manName, setManName] = useState('');
+  const [manCal, setManCal] = useState('');
+  const [manP, setManP] = useState('');
+  const [manF, setManF] = useState('');
+  const [manC, setManC] = useState('');
+
+  // API search state
+  const [apiQuery, setApiQuery] = useState('');
+  const [apiResults, setApiResults] = useState<FoodItem[]>([]);
+  const [apiLoading, setApiLoading] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
 
   const todayMeals = useLiveQuery(() => db.meals.where('date').equals(today()).toArray(), []) || [];
   const api = getApiKeyStatus();
+
   const filtered = FOOD_DB.filter(f => {
     if(catF!=='ALL' && f.cat!==catF) return false;
     if(search && !f.name.includes(search)) return false;
     return true;
   });
 
+  // API search with debounce
+  const doApiSearch = useCallback((q: string) => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (q.length < 2) { setApiResults([]); return; }
+    setApiLoading(true);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const results = await searchByName(q);
+        setApiResults(results);
+      } catch { setApiResults([]); }
+      setApiLoading(false);
+    }, 500);
+  }, []);
+
+  const handleApiQueryChange = (q: string) => {
+    setApiQuery(q);
+    doApiSearch(q);
+  };
+
   const handlePhoto = async (file: File) => {
-    setPhotoFile(file);
-    setAiLoading(true);
-    setMode('camera');
+    setAiLoading(true); setMode('camera');
     if (api.gemini || api.claude) {
       try {
         const result = await recognizeFood(file);
-        setAiRes(result.items);
-        setAiLoading(false);
-        setMode('aiResult');
-        return;
+        setAiRes(result.items); setAiLoading(false); setMode('aiResult'); return;
       } catch (e) { console.error(e); }
     }
-    // Fallback to demo
     setTimeout(() => { setAiRes(simulateAI()); setAiLoading(false); setMode('aiResult'); }, 2000+Math.random()*1000);
   };
 
   const doAI = () => {
-    // If no real API, simulate
     setAiLoading(true); setMode('camera');
     setTimeout(() => { setAiRes(simulateAI()); setAiLoading(false); setMode('aiResult'); }, 2000+Math.random()*1000);
   };
@@ -74,11 +102,28 @@ export default function MealScreen({ profile }: Props) {
     setMode('home'); setSel(null); setAdj(100);
   };
 
+  const confirmManual = async () => {
+    if (!manName || !manCal) return;
+    await addMeal({
+      date: today(), mealType, dishName: manName, emoji: '✏️',
+      calories: parseInt(manCal) || 0, protein: parseInt(manP) || 0,
+      fat: parseInt(manF) || 0, carbs: parseInt(manC) || 0,
+      source: 'manual', confidence: 1, createdAt: Date.now(),
+    });
+    setMode('home'); setManName(''); setManCal(''); setManP(''); setManF(''); setManC('');
+  };
+
+  const resetToHome = () => { setMode('home'); setSel(null); setAdj(100); setApiQuery(''); setApiResults([]); };
+
+  const BackBtn = ({to}:{to?:Mode}) => (
+    <button onClick={()=>to?setMode(to):resetToHome()} style={{background:'none',border:'none',color:'var(--pri)',fontSize:13,cursor:'pointer',marginBottom:8}}>← 戻る</button>
+  );
+
   // ── Confirm screen ──
   if (mode==='confirm' && sel) {
     const m = adj/100;
     return (<div className="fade-in">
-      <button onClick={()=>{setMode(sel.confidence?'aiResult':'search');setSel(null);}} style={{background:'none',border:'none',color:'var(--pri)',fontSize:13,cursor:'pointer',marginBottom:8}}>← 戻る</button>
+      <BackBtn to={sel.confidence?'aiResult':'search'}/>
       <div style={{...sC,textAlign:'center'}}>
         <div style={{fontSize:48,marginBottom:4}}>{sel.emoji||'🍽️'}</div>
         <div style={{fontSize:18,fontWeight:700,color:'var(--txt)'}}>{sel.name}</div>
@@ -102,7 +147,7 @@ export default function MealScreen({ profile }: Props) {
   // ── AI result ──
   if (mode==='aiResult') {
     return (<div className="fade-in">
-      <button onClick={()=>setMode('home')} style={{background:'none',border:'none',color:'var(--pri)',fontSize:13,cursor:'pointer',marginBottom:8}}>← 戻る</button>
+      <BackBtn/>
       <div style={{...sC,textAlign:'center',padding:16,background:'linear-gradient(135deg,var(--pri-dim),var(--card))'}}>
         <div style={{fontSize:13,fontWeight:700,color:'var(--pri)',marginBottom:4}}>🤖 AI認識結果</div>
         <div style={{fontSize:10,color:'var(--sub)'}}>Gemini Vision AI{api.gemini?'':'（デモモード）'}</div>
@@ -118,7 +163,11 @@ export default function MealScreen({ profile }: Props) {
           <div style={{textAlign:'right'}}><div style={{color:'var(--warn)',fontSize:16,fontWeight:700}}>{food.cal}</div><div style={{color:'var(--sub)',fontSize:9}}>kcal</div></div>
         </button>
       ))}
-      <button onClick={()=>setMode('search')} style={{background:'none',border:'none',color:'var(--sub)',fontSize:12,cursor:'pointer',textDecoration:'underline',width:'100%',textAlign:'center',marginTop:8}}>認識結果が違う？手動で検索</button>
+      <div style={{display:'flex',gap:8,marginTop:8}}>
+        <button onClick={()=>setMode('search')} style={{flex:1,background:'none',border:'1px solid var(--bor)',color:'var(--sub)',fontSize:12,cursor:'pointer',padding:'8px',borderRadius:8}}>🔍 DB検索</button>
+        <button onClick={()=>setMode('apiSearch')} style={{flex:1,background:'none',border:'1px solid var(--bor)',color:'var(--sub)',fontSize:12,cursor:'pointer',padding:'8px',borderRadius:8}}>🌐 商品名検索</button>
+        <button onClick={()=>setMode('manual')} style={{flex:1,background:'none',border:'1px solid var(--bor)',color:'var(--sub)',fontSize:12,cursor:'pointer',padding:'8px',borderRadius:8}}>✏️ 手入力</button>
+      </div>
     </div>);
   }
 
@@ -129,18 +178,125 @@ export default function MealScreen({ profile }: Props) {
         <div style={{fontSize:64,marginBottom:16,animation:'pulse 1.5s ease infinite'}}>{aiLoading?'🔍':'📷'}</div>
         <div style={{color:'var(--pri)',fontSize:16,fontWeight:700,marginBottom:8}}>{aiLoading?'AIが分析中...':'写真を撮影中...'}</div>
         <div style={{color:'var(--sub)',fontSize:12}}>{aiLoading?'食事の内容とカロリーを推定しています':'Gemini Vision API で認識します'}</div>
-        {aiLoading && <div style={{marginTop:16,height:4,background:'var(--bor)',borderRadius:2,overflow:'hidden'}}>
-          <div style={{height:'100%',background:'var(--pri)',borderRadius:2,animation:'loading 2s ease infinite',width:'60%'}}/>
-        </div>}
+        {aiLoading && <div style={{marginTop:16,height:4,background:'var(--bor)',borderRadius:2,overflow:'hidden'}}><div style={{height:'100%',background:'var(--pri)',borderRadius:2,animation:'loading 2s ease infinite',width:'60%'}}/></div>}
       </div>
       <style>{`@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}@keyframes loading{0%{transform:translateX(-100%)}100%{transform:translateX(200%)}}`}</style>
     </div>);
   }
 
-  // ── Search ──
+  // ── Manual input ──
+  if (mode==='manual') {
+    return (<div className="fade-in">
+      <BackBtn/>
+      <div style={{...sC}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:14}}>
+          <span style={{fontSize:22}}>✏️</span>
+          <div style={{color:'var(--txt)',fontSize:15,fontWeight:700}}>手入力で記録</div>
+        </div>
+
+        <div style={{marginBottom:12}}>
+          <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>料理名・商品名 *</label>
+          <input value={manName} onChange={e=>setManName(e.target.value)} placeholder="例: チキン南蛮弁当" style={sI}/>
+        </div>
+
+        <div style={{marginBottom:12}}>
+          <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>カロリー (kcal) *</label>
+          <input type="number" value={manCal} onChange={e=>setManCal(e.target.value)} placeholder="例: 650" style={{...sI,fontSize:20,fontWeight:700,textAlign:'center'}}/>
+        </div>
+
+        <div style={{color:'var(--sub)',fontSize:11,marginBottom:6}}>PFCバランス（任意・わかる範囲でOK）</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:16}}>
+          <div>
+            <label style={{color:'#60A5FA',fontSize:10,display:'block',marginBottom:2}}>P: タンパク質(g)</label>
+            <input type="number" value={manP} onChange={e=>setManP(e.target.value)} placeholder="0" style={{...sI,fontSize:13}}/>
+          </div>
+          <div>
+            <label style={{color:'#FBBF24',fontSize:10,display:'block',marginBottom:2}}>F: 脂質(g)</label>
+            <input type="number" value={manF} onChange={e=>setManF(e.target.value)} placeholder="0" style={{...sI,fontSize:13}}/>
+          </div>
+          <div>
+            <label style={{color:'#4ADE80',fontSize:10,display:'block',marginBottom:2}}>C: 炭水化物(g)</label>
+            <input type="number" value={manC} onChange={e=>setManC(e.target.value)} placeholder="0" style={{...sI,fontSize:13}}/>
+          </div>
+        </div>
+
+        {manCal && <div style={{textAlign:'center',padding:8,background:'var(--warn-dim)',borderRadius:8,marginBottom:12}}>
+          <span style={{fontSize:24,fontWeight:800,color:'var(--warn)'}}>{manCal} kcal</span>
+        </div>}
+
+        <button onClick={confirmManual} disabled={!manName||!manCal}
+          style={{...sB,opacity:manName&&manCal?1:0.5}}>
+          記録する ✓
+        </button>
+      </div>
+
+      <div style={{padding:12,background:'var(--bg)',borderRadius:10,border:'1px solid var(--bor)'}}>
+        <div style={{fontSize:11,color:'var(--sub)',lineHeight:1.6}}>
+          💡 カロリーがわからない場合は、商品のパッケージ裏面や「商品名 カロリー」でウェブ検索すると見つかることが多いです。
+        </div>
+      </div>
+    </div>);
+  }
+
+  // ── API product name search ──
+  if (mode==='apiSearch') {
+    return (<div className="fade-in">
+      <BackBtn/>
+      <div style={{...sC,padding:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+          <span style={{fontSize:20}}>🌐</span>
+          <div style={{color:'var(--txt)',fontSize:15,fontWeight:700}}>商品名で検索</div>
+        </div>
+        <div style={{fontSize:11,color:'var(--sub)',marginBottom:10}}>
+          OpenFoodFacts の世界食品データベースから検索します
+        </div>
+        <input value={apiQuery} onChange={e=>handleApiQueryChange(e.target.value)}
+          placeholder="商品名を入力（例: ポカリスエット）" style={sI}/>
+      </div>
+
+      {apiLoading && <div style={{textAlign:'center',padding:16,color:'var(--sub)',fontSize:12}}>🔍 検索中...</div>}
+
+      {!apiLoading && apiQuery.length >= 2 && apiResults.length === 0 && (
+        <div style={{...sC,textAlign:'center',padding:16}}>
+          <div style={{color:'var(--sub)',fontSize:12,marginBottom:8}}>該当する商品が見つかりませんでした</div>
+          <button onClick={()=>{setManName(apiQuery);setMode('manual');}}
+            style={{background:'none',border:'1px solid var(--pri)',color:'var(--pri)',padding:'8px 16px',borderRadius:8,fontSize:12,cursor:'pointer'}}>
+            ✏️ 「{apiQuery}」を手入力で記録する
+          </button>
+        </div>
+      )}
+
+      <div style={{display:'flex',flexDirection:'column',gap:4}}>
+        {apiResults.map((food,i) => (
+          <button key={i} onClick={()=>{setSel(food);setMode('confirm');}}
+            style={{...sC,display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',marginBottom:0,padding:12,textAlign:'left',width:'100%'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:20}}>{food.emoji}</span>
+              <div>
+                <div style={{color:'var(--txt)',fontSize:13,fontWeight:600}}>{food.name}</div>
+                <div style={{color:'var(--sub)',fontSize:9}}>P:{food.p}g F:{food.f}g C:{food.c}g</div>
+              </div>
+            </div>
+            <span style={{color:'var(--warn)',fontSize:14,fontWeight:700}}>{food.cal}<span style={{fontSize:9}}>kcal</span></span>
+          </button>
+        ))}
+      </div>
+
+      {apiResults.length > 0 && (
+        <div style={{textAlign:'center',marginTop:12}}>
+          <button onClick={()=>setMode('manual')}
+            style={{background:'none',border:'none',color:'var(--sub)',fontSize:12,cursor:'pointer',textDecoration:'underline'}}>
+            見つからない？✏️ 手入力で記録
+          </button>
+        </div>
+      )}
+    </div>);
+  }
+
+  // ── Internal DB search ──
   if (mode==='search') {
     return (<div className="fade-in">
-      <button onClick={()=>setMode('home')} style={{background:'none',border:'none',color:'var(--pri)',fontSize:13,cursor:'pointer',marginBottom:8}}>← 戻る</button>
+      <BackBtn/>
       <input placeholder="食品名で検索..." value={search} onChange={e=>setSearch(e.target.value)} style={{...sI,marginBottom:8}}/>
       <div style={{display:'flex',gap:4,marginBottom:10,overflowX:'auto',paddingBottom:4}}>
         {['ALL',...FOOD_CATEGORIES].map(c=>(
@@ -159,12 +315,17 @@ export default function MealScreen({ profile }: Props) {
           </button>
         ))}
       </div>
+      <div style={{textAlign:'center',marginTop:12,display:'flex',gap:8,justifyContent:'center'}}>
+        <button onClick={()=>setMode('apiSearch')} style={{background:'none',border:'1px solid var(--pri)',color:'var(--pri)',padding:'8px 16px',borderRadius:8,fontSize:12,cursor:'pointer'}}>🌐 商品名でAPI検索</button>
+        <button onClick={()=>setMode('manual')} style={{background:'none',border:'1px solid var(--acc)',color:'var(--acc)',padding:'8px 16px',borderRadius:8,fontSize:12,cursor:'pointer'}}>✏️ 手入力</button>
+      </div>
     </div>);
   }
 
   // ── Home ──
   return (<div className="fade-in">
     <h2 style={{color:'var(--txt)',fontSize:18,fontWeight:700,margin:'0 0 12px'}}>食事を記録</h2>
+    {/* Meal type */}
     <div style={{display:'flex',gap:6,marginBottom:16}}>
       {([{id:'breakfast',l:'朝食',i:'🌅'},{id:'lunch',l:'昼食',i:'☀️'},{id:'dinner',l:'夕食',i:'🌙'},{id:'snack',l:'間食',i:'🍪'}] as {id:MealType;l:string;i:string}[]).map(t=>(
         <button key={t.id} onClick={()=>setMealType(t.id)} style={{flex:1,padding:'10px 4px',borderRadius:10,border:'none',cursor:'pointer',
@@ -175,31 +336,49 @@ export default function MealScreen({ profile }: Props) {
       ))}
     </div>
 
-    {/* Camera input (real) + demo button */}
-    <div style={{...sC,textAlign:'center',padding:28,background:'linear-gradient(135deg,var(--pri-dim),var(--card))',border:'2px dashed rgba(108,156,255,0.3)'}}>
-      <div style={{fontSize:40,marginBottom:8}}>📷</div>
-      <div style={{color:'var(--pri)',fontSize:16,fontWeight:700}}>写真を撮影してAIで認識</div>
+    {/* Camera */}
+    <button onClick={doAI} style={{...sC,width:'100%',textAlign:'center',padding:24,cursor:'pointer',
+      background:'linear-gradient(135deg,var(--pri-dim),var(--card))',border:'2px dashed rgba(108,156,255,0.3)'}}>
+      <div style={{fontSize:36,marginBottom:6}}>📷</div>
+      <div style={{color:'var(--pri)',fontSize:15,fontWeight:700}}>写真を撮影してAIで認識</div>
       <div style={{color:'var(--sub)',fontSize:11,marginTop:4}}>Gemini Vision AI が自動でカロリーを推定</div>
-      <div style={{display:'flex',gap:8,justifyContent:'center',marginTop:12}}>
+      <div style={{display:'flex',gap:8,justifyContent:'center',marginTop:10}}>
         <label style={{background:'var(--pri)',color:'#fff',padding:'8px 16px',borderRadius:10,fontSize:13,fontWeight:600,cursor:'pointer'}}>
           写真を選択
           <input type="file" accept="image/*" capture="environment" style={{display:'none'}}
             onChange={e => { const f=e.target.files?.[0]; if(f) handlePhoto(f); }}/>
         </label>
-        <button onClick={doAI} style={{background:'var(--bor)',color:'var(--txt)',padding:'8px 16px',borderRadius:10,fontSize:13,fontWeight:600,cursor:'pointer',border:'none'}}>
+        <button onClick={(e)=>{e.stopPropagation();doAI();}} style={{background:'var(--bor)',color:'var(--txt)',padding:'8px 16px',borderRadius:10,fontSize:13,fontWeight:600,cursor:'pointer',border:'none'}}>
           デモ
         </button>
       </div>
-    </div>
-
-    <div style={{textAlign:'center',margin:'12px 0',color:'var(--sub)',fontSize:11}}>または</div>
-
-    <button onClick={()=>setMode('search')} style={{...sC,width:'100%',textAlign:'center',padding:16,cursor:'pointer'}}>
-      <div style={{fontSize:24,marginBottom:4}}>🔍</div>
-      <div style={{color:'var(--txt)',fontSize:14,fontWeight:600}}>食品を手動で検索</div>
-      <div style={{color:'var(--sub)',fontSize:11}}>60品目以上の日本食データベースから選択</div>
     </button>
 
+    {/* 4 action buttons */}
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:12}}>
+      <button onClick={()=>setMode('search')} style={{...sC,textAlign:'center',padding:16,cursor:'pointer',marginBottom:0}}>
+        <div style={{fontSize:22,marginBottom:4}}>🔍</div>
+        <div style={{color:'var(--txt)',fontSize:13,fontWeight:600}}>食品DB検索</div>
+        <div style={{color:'var(--sub)',fontSize:10}}>60品目以上の日本食DB</div>
+      </button>
+      <button onClick={()=>setMode('apiSearch')} style={{...sC,textAlign:'center',padding:16,cursor:'pointer',marginBottom:0}}>
+        <div style={{fontSize:22,marginBottom:4}}>🌐</div>
+        <div style={{color:'var(--txt)',fontSize:13,fontWeight:600}}>商品名検索</div>
+        <div style={{color:'var(--sub)',fontSize:10}}>OpenFoodFacts API</div>
+      </button>
+      <button onClick={()=>setMode('manual')} style={{...sC,textAlign:'center',padding:16,cursor:'pointer',marginBottom:0}}>
+        <div style={{fontSize:22,marginBottom:4}}>✏️</div>
+        <div style={{color:'var(--txt)',fontSize:13,fontWeight:600}}>手入力</div>
+        <div style={{color:'var(--sub)',fontSize:10}}>カロリーを直接入力</div>
+      </button>
+      <button onClick={()=>{}} style={{...sC,textAlign:'center',padding:16,cursor:'default',marginBottom:0,opacity:0.4}}>
+        <div style={{fontSize:22,marginBottom:4}}>📱</div>
+        <div style={{color:'var(--txt)',fontSize:13,fontWeight:600}}>バーコード</div>
+        <div style={{color:'var(--sub)',fontSize:10}}>Coming Soon</div>
+      </button>
+    </div>
+
+    {/* Today's meals */}
     {todayMeals.length > 0 && <div style={{...sC,marginTop:12}}>
       <span style={{color:'var(--txt)',fontSize:13,fontWeight:700}}>今日の記録 ({todayMeals.reduce((s,m)=>s+m.calories,0)} kcal)</span>
       {todayMeals.map((m,i) => (
