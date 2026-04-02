@@ -4,12 +4,13 @@
  * メイン: Gemini 2.5 Flash Vision API
  * フォールバック: Claude Haiku 4.5
  *
- * APIキーは環境変数で管理:
- *   VITE_GEMINI_API_KEY
- *   VITE_CLAUDE_API_KEY
+ * APIキーはブラウザ内(localStorage)で管理
  */
 
 import type { AIRecognitionResult, VisionProvider, VisionResponse } from '../types';
+import { getGeminiKey, getClaudeKey, getApiKeyStatus } from './apikeys';
+
+export { getApiKeyStatus } from './apikeys';
 
 // ── 設定 ──
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
@@ -87,8 +88,8 @@ export async function resizeImage(file: File | Blob, maxSize = 1568): Promise<Bl
 
 // ── Gemini Vision API ──
 async function recognizeWithGemini(base64Image: string): Promise<AIRecognitionResult[]> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) throw new Error('VITE_GEMINI_API_KEY が設定されていません');
+  const apiKey = getGeminiKey();
+  if (!apiKey) throw new Error('Gemini APIキーが設定されていません');
 
   const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
     method: 'POST',
@@ -127,8 +128,8 @@ async function recognizeWithGemini(base64Image: string): Promise<AIRecognitionRe
 
 // ── Claude Vision API (フォールバック) ──
 async function recognizeWithClaude(base64Image: string): Promise<AIRecognitionResult[]> {
-  const apiKey = import.meta.env.VITE_CLAUDE_API_KEY;
-  if (!apiKey) throw new Error('VITE_CLAUDE_API_KEY が設定されていません');
+  const apiKey = getClaudeKey();
+  if (!apiKey) throw new Error('Claude APIキーが設定されていません');
 
   const response = await fetch(CLAUDE_API_URL, {
     method: 'POST',
@@ -196,10 +197,4 @@ export async function recognizeFood(imageFile: File | Blob): Promise<VisionRespo
   }
 }
 
-// ── APIキーの設定状態チェック ──
-export function getApiKeyStatus(): { gemini: boolean; claude: boolean } {
-  return {
-    gemini: !!import.meta.env.VITE_GEMINI_API_KEY,
-    claude: !!import.meta.env.VITE_CLAUDE_API_KEY,
-  };
-}
+

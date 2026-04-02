@@ -3,6 +3,7 @@
  */
 
 import type { Meal, BodyRecord, Exercise, HabitRecord, UserProfile } from '../types';
+import { getClaudeKey } from './apikeys';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -15,7 +16,7 @@ interface WeeklyData {
 }
 
 export async function generateWeeklyReport(data: WeeklyData): Promise<string> {
-  const apiKey = import.meta.env.VITE_CLAUDE_API_KEY;
+  const apiKey = getClaudeKey();
   if (!apiKey) {
     return generateOfflineReport(data);
   }
