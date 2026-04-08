@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, getProfile, saveProfile } from './data/db';
 import type { UserProfile } from './types';
@@ -29,6 +29,20 @@ export default function App() {
   const [tab, setTab] = useState<TabId>('settings');
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // 最新の体重記録を取得（TDEE計算に使用）
+  const latestBodyRecord = useLiveQuery(
+    () => db.bodyRecords.orderBy('date').last()
+  );
+
+  // 最新体重を反映した実効プロフィール（設定画面以外で使用）
+  const effectiveProfile = useMemo(() => {
+    if (!profile) return null;
+    if (latestBodyRecord?.weight) {
+      return { ...profile, weight: latestBodyRecord.weight };
+    }
+    return profile;
+  }, [profile, latestBodyRecord]);
 
   // 初回ロード
   useEffect(() => {
@@ -81,17 +95,17 @@ export default function App() {
 
       {/* Content */}
       <main style={{ padding: '6px 14px 76px' }}>
-        {tab === 'home' && profile && (
-          <DashboardScreen profile={profile} onNavigate={setTab} />
+        {tab === 'home' && effectiveProfile && (
+          <DashboardScreen profile={effectiveProfile} onNavigate={setTab} />
         )}
-        {tab === 'meal' && profile && (
-          <MealScreen profile={profile} />
+        {tab === 'meal' && effectiveProfile && (
+          <MealScreen profile={effectiveProfile} />
         )}
-        {tab === 'weight' && profile && (
-          <WeightScreen profile={profile} />
+        {tab === 'weight' && effectiveProfile && (
+          <WeightScreen profile={effectiveProfile} />
         )}
-        {tab === 'exercise' && profile && (
-          <ExerciseScreen profile={profile} />
+        {tab === 'exercise' && effectiveProfile && (
+          <ExerciseScreen profile={effectiveProfile} />
         )}
         {tab === 'habit' && (
           <HabitScreen />
