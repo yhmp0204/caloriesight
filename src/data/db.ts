@@ -46,6 +46,10 @@ export async function addMeal(meal: Omit<Meal, 'id'>): Promise<number | undefine
   return db.meals.add(meal as Meal);
 }
 
+export async function updateMeal(id: number, changes: Partial<Meal>): Promise<void> {
+  await db.meals.update(id, changes);
+}
+
 export async function deleteMeal(id: number): Promise<void> {
   await db.meals.delete(id);
 }
@@ -56,6 +60,10 @@ export async function getBodyRecordByDate(date: string): Promise<BodyRecord | un
 
 export async function getAllBodyRecords(): Promise<BodyRecord[]> {
   return db.bodyRecords.orderBy('date').toArray();
+}
+
+export async function deleteBodyRecord(id: number): Promise<void> {
+  await db.bodyRecords.delete(id);
 }
 
 export async function upsertBodyRecord(record: Omit<BodyRecord, 'id'>): Promise<void> {
@@ -77,6 +85,10 @@ export async function addExercise(exercise: Omit<Exercise, 'id'>): Promise<numbe
 
 export async function getHabitByDate(date: string): Promise<HabitRecord | undefined> {
   return db.habits.where('date').equals(date).first();
+}
+
+export async function deleteHabit(id: number): Promise<void> {
+  await db.habits.delete(id);
 }
 
 export async function upsertHabit(record: Omit<HabitRecord, 'id'>): Promise<void> {

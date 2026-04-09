@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, addMeal } from '../data/db';
+import { db, addMeal, updateMeal, deleteMeal } from '../data/db';
 import { recognizeFood, getApiKeyStatus } from '../services/vision';
-import { today } from '../utils/date';
-import type { UserProfile, MealType, FoodItem, AIRecognitionResult } from '../types';
+import { today, fmtShort, dayOfWeek } from '../utils/date';
+import type { UserProfile, MealType, Meal, FoodItem, AIRecognitionResult } from '../types';
 
 const sC: React.CSSProperties = {background:'var(--card)',borderRadius:16,padding:20,border:'1px solid var(--bor)',marginBottom:12};
 const sI: React.CSSProperties = {background:'var(--bg)',color:'var(--txt)',border:'1px solid var(--bor)',borderRadius:10,padding:'10px 14px',fontSize:15,width:'100%',boxSizing:'border-box',outline:'none'};
@@ -11,9 +11,9 @@ const sB: React.CSSProperties = {background:'var(--pri)',color:'#fff',border:'no
 
 interface Props { profile: UserProfile; }
 
-type Mode = 'home'|'camera'|'aiResult'|'confirm'|'manual';
+type Mode = 'home'|'camera'|'aiResult'|'confirm'|'manual'|'history'|'dayDetail';
 
-export default function MealScreen({ profile }: Props) {
+export default function MealScreen(_props: Props) {
   const [mode, setMode] = useState<Mode>('home');
   const [mealType, setMealType] = useState<MealType>('lunch');
   const [sel, setSel] = useState<(FoodItem & {confidence?:number})|null>(null);
@@ -28,8 +28,66 @@ export default function MealScreen({ profile }: Props) {
   const [manF, setManF] = useState('');
   const [manC, setManC] = useState('');
 
-  const todayMeals = useLiveQuery(() => db.meals.where('date').equals(today()).toArray(), []) || [];
+  // Edit modal state
+  const [editingMeal, setEditingMeal] = useState<Meal|null>(null);
+  const [editName, setEditName] = useState('');
+  const [editCal, setEditCal] = useState('');
+  const [editP, setEditP] = useState('');
+  const [editF, setEditF] = useState('');
+  const [editC, setEditC] = useState('');
+
+  // History state
+  const [viewDate, setViewDate] = useState('');
+
+  const todayStr = today();
+  const todayMeals = useLiveQuery(() => db.meals.where('date').equals(todayStr).toArray(), [todayStr]) || [];
+  const allMeals = useLiveQuery(() => db.meals.orderBy('date').reverse().toArray(), []) || [];
   const api = getApiKeyStatus();
+
+  // Group meals by date for history
+  const mealsByDate = allMeals.reduce<Record<string, Meal[]>>((acc, m) => {
+    (acc[m.date] = acc[m.date] || []).push(m);
+    return acc;
+  }, {});
+  const dates = Object.keys(mealsByDate);
+
+  // Meals for selected day in detail view
+  const dayMeals = viewDate ? (mealsByDate[viewDate] || []) : [];
+
+  const openEdit = (m: Meal) => {
+    setEditingMeal(m);
+    setEditName(m.dishName);
+    setEditCal(String(m.calories));
+    setEditP(String(m.protein));
+    setEditF(String(m.fat));
+    setEditC(String(m.carbs));
+  };
+
+  const handleEditSave = async () => {
+    if (!editingMeal?.id || !editName || !editCal) return;
+    await updateMeal(editingMeal.id, {
+      dishName: editName, calories: parseInt(editCal)||0,
+      protein: parseInt(editP)||0, fat: parseInt(editF)||0, carbs: parseInt(editC)||0,
+    });
+    setEditingMeal(null);
+  };
+
+  const handleEditDelete = async () => {
+    if (!editingMeal?.id) return;
+    if (!window.confirm('この記録を削除しますか？')) return;
+    await deleteMeal(editingMeal.id);
+    setEditingMeal(null);
+  };
+
+  // Copy meal to today
+  const handleCopy = async (m: Meal) => {
+    await addMeal({
+      date: todayStr, mealType: m.mealType, dishName: m.dishName, emoji: m.emoji,
+      calories: m.calories, protein: m.protein, fat: m.fat, carbs: m.carbs,
+      source: 'manual', confidence: 1, createdAt: Date.now(),
+    });
+    setMode('home');
+  };
 
   const handlePhoto = async (file: File) => {
     setAiLoading(true); setMode('camera');
@@ -44,14 +102,13 @@ export default function MealScreen({ profile }: Props) {
 
   const doAI = () => {
     setAiLoading(true); setMode('camera');
-    // Demo mode - requires API key for real recognition
     setAiLoading(false); setMode('home');
   };
 
   const confirm = async (food: FoodItem & {confidence?:number}, a=100) => {
     const m = a/100;
     await addMeal({
-      date: today(), mealType, dishName: food.name, emoji: food.emoji || '🍽️',
+      date: todayStr, mealType, dishName: food.name, emoji: food.emoji || '🍽️',
       calories: Math.round(food.cal*m), protein: Math.round(food.p*m),
       fat: Math.round(food.f*m), carbs: Math.round(food.c*m),
       source: food.confidence ? 'ai_gemini' : 'manual',
@@ -63,7 +120,7 @@ export default function MealScreen({ profile }: Props) {
   const confirmManual = async () => {
     if (!manName || !manCal) return;
     await addMeal({
-      date: today(), mealType, dishName: manName, emoji: '✏️',
+      date: todayStr, mealType, dishName: manName, emoji: '✏️',
       calories: parseInt(manCal) || 0, protein: parseInt(manP) || 0,
       fat: parseInt(manF) || 0, carbs: parseInt(manC) || 0,
       source: 'manual', confidence: 1, createdAt: Date.now(),
@@ -76,6 +133,116 @@ export default function MealScreen({ profile }: Props) {
   const BackBtn = ({to}:{to?:Mode}) => (
     <button onClick={()=>to?setMode(to):resetToHome()} style={{background:'none',border:'none',color:'var(--pri)',fontSize:13,cursor:'pointer',marginBottom:8}}>← 戻る</button>
   );
+
+  // Edit modal (shared across views)
+  const editModal = editingMeal && (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:200,
+      display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+      onClick={()=>setEditingMeal(null)}>
+      <div style={{...sC,width:'100%',maxWidth:360,margin:0}} onClick={e=>e.stopPropagation()}>
+        <div style={{color:'var(--txt)',fontSize:15,fontWeight:700,marginBottom:12}}>食事を編集</div>
+        <div style={{marginBottom:8}}>
+          <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>料理名</label>
+          <input value={editName} onChange={e=>setEditName(e.target.value)} style={sI}/>
+        </div>
+        <div style={{marginBottom:8}}>
+          <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>カロリー (kcal)</label>
+          <input type="number" value={editCal} onChange={e=>setEditCal(e.target.value)} style={sI}/>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:6,marginBottom:12}}>
+          <div>
+            <label style={{color:'#60A5FA',fontSize:10,display:'block',marginBottom:2}}>P(g)</label>
+            <input type="number" value={editP} onChange={e=>setEditP(e.target.value)} style={{...sI,fontSize:13}}/>
+          </div>
+          <div>
+            <label style={{color:'#FBBF24',fontSize:10,display:'block',marginBottom:2}}>F(g)</label>
+            <input type="number" value={editF} onChange={e=>setEditF(e.target.value)} style={{...sI,fontSize:13}}/>
+          </div>
+          <div>
+            <label style={{color:'#4ADE80',fontSize:10,display:'block',marginBottom:2}}>C(g)</label>
+            <input type="number" value={editC} onChange={e=>setEditC(e.target.value)} style={{...sI,fontSize:13}}/>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button onClick={handleEditDelete}
+            style={{flex:1,background:'var(--err)',color:'#fff',border:'none',borderRadius:12,padding:'10px',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+            削除
+          </button>
+          <button onClick={handleEditSave}
+            style={{flex:1,background:'var(--pri)',color:'#fff',border:'none',borderRadius:12,padding:'10px',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Meal row component
+  const MealRow = ({m, showCopy}: {m: Meal; showCopy?: boolean}) => (
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'7px 0',borderTop:'1px solid var(--bor)',marginTop:4}}>
+      <button onClick={()=>openEdit(m)}
+        style={{display:'flex',alignItems:'center',gap:6,background:'none',border:'none',cursor:'pointer',textAlign:'left',flex:1,padding:0}}>
+        <span>{m.emoji||'🍽️'}</span>
+        <span style={{color:'var(--txt)',fontSize:12}}>{m.dishName}</span>
+      </button>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <span style={{color:'var(--warn)',fontSize:12,fontWeight:700}}>{m.calories}kcal</span>
+        {showCopy && (
+          <button onClick={()=>handleCopy(m)}
+            style={{background:'var(--pri-dim)',border:'none',borderRadius:6,padding:'3px 8px',fontSize:10,color:'var(--pri)',fontWeight:600,cursor:'pointer'}}>
+            コピー
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── Day detail view ──
+  if (mode==='dayDetail' && viewDate) {
+    const total = dayMeals.reduce((s,m)=>s+m.calories,0);
+    const isToday = viewDate === todayStr;
+    return (<div className="fade-in">
+      <BackBtn to="history"/>
+      <div style={{...sC}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{color:'var(--txt)',fontSize:15,fontWeight:700}}>
+            {fmtShort(viewDate)}({dayOfWeek(viewDate)}) の食事
+          </span>
+          <span style={{color:'var(--warn)',fontSize:14,fontWeight:700}}>{total} kcal</span>
+        </div>
+        {dayMeals.map((m,i) => <MealRow key={m.id||i} m={m} showCopy={!isToday}/>)}
+      </div>
+      {editModal}
+    </div>);
+  }
+
+  // ── History view ──
+  if (mode==='history') {
+    return (<div className="fade-in">
+      <BackBtn/>
+      <h2 style={{color:'var(--txt)',fontSize:18,fontWeight:700,margin:'0 0 12px'}}>過去の食事記録</h2>
+      {dates.length === 0 && <div style={{color:'var(--sub)',fontSize:13,textAlign:'center',padding:20}}>記録がありません</div>}
+      {dates.map(d => {
+        const meals = mealsByDate[d];
+        const total = meals.reduce((s,m)=>s+m.calories,0);
+        return (
+          <button key={d} onClick={()=>{setViewDate(d);setMode('dayDetail');}}
+            style={{...sC,width:'100%',cursor:'pointer',textAlign:'left',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>
+              <div style={{color:'var(--txt)',fontSize:13,fontWeight:700}}>{fmtShort(d)}({dayOfWeek(d)})</div>
+              <div style={{color:'var(--sub)',fontSize:10,marginTop:2}}>
+                {meals.map(m=>m.dishName).join('、').slice(0,30)}{meals.map(m=>m.dishName).join('、').length>30?'...':''}
+              </div>
+            </div>
+            <div style={{textAlign:'right'}}>
+              <div style={{color:'var(--warn)',fontSize:14,fontWeight:700}}>{total} kcal</div>
+              <div style={{color:'var(--sub)',fontSize:10}}>{meals.length}件</div>
+            </div>
+          </button>
+        );
+      })}
+    </div>);
+  }
 
   // ── Confirm screen ──
   if (mode==='confirm' && sel) {
@@ -223,24 +390,27 @@ export default function MealScreen({ profile }: Props) {
       </div>
     </button>
 
-    {/* Manual input button */}
-    <button onClick={()=>setMode('manual')} style={{...sC,width:'100%',textAlign:'center',padding:16,cursor:'pointer',marginTop:12}}>
-      <div style={{fontSize:22,marginBottom:4}}>✏️</div>
-      <div style={{color:'var(--txt)',fontSize:13,fontWeight:600}}>手入力</div>
-      <div style={{color:'var(--sub)',fontSize:10}}>カロリーを直接入力</div>
-    </button>
+    {/* Action buttons */}
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:12}}>
+      <button onClick={()=>setMode('manual')} style={{...sC,textAlign:'center',padding:16,cursor:'pointer',marginBottom:0}}>
+        <div style={{fontSize:22,marginBottom:4}}>✏️</div>
+        <div style={{color:'var(--txt)',fontSize:13,fontWeight:600}}>手入力</div>
+        <div style={{color:'var(--sub)',fontSize:10}}>カロリーを直接入力</div>
+      </button>
+      <button onClick={()=>setMode('history')} style={{...sC,textAlign:'center',padding:16,cursor:'pointer',marginBottom:0}}>
+        <div style={{fontSize:22,marginBottom:4}}>📋</div>
+        <div style={{color:'var(--txt)',fontSize:13,fontWeight:600}}>過去の記録</div>
+        <div style={{color:'var(--sub)',fontSize:10}}>履歴の参照・コピー</div>
+      </button>
+    </div>
 
     {/* Today's meals */}
     {todayMeals.length > 0 && <div style={{...sC,marginTop:12}}>
       <span style={{color:'var(--txt)',fontSize:13,fontWeight:700}}>今日の記録 ({todayMeals.reduce((s,m)=>s+m.calories,0)} kcal)</span>
-      {todayMeals.map((m,i) => (
-        <div key={m.id||i} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'7px 0',borderTop:'1px solid var(--bor)',marginTop:6}}>
-          <div style={{display:'flex',alignItems:'center',gap:6}}>
-            <span>{m.emoji||'🍽️'}</span><span style={{color:'var(--txt)',fontSize:12}}>{m.dishName}</span>
-          </div>
-          <span style={{color:'var(--warn)',fontSize:12,fontWeight:700}}>{m.calories}kcal</span>
-        </div>
-      ))}
+      <div style={{color:'var(--sub)',fontSize:10,marginTop:2}}>タップで編集</div>
+      {todayMeals.map((m,i) => <MealRow key={m.id||i} m={m}/>)}
     </div>}
+
+    {editModal}
   </div>);
 }

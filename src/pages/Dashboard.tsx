@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../data/db';
 import type { UserProfile, Meal, Exercise, HabitRecord } from '../types';
@@ -6,7 +6,7 @@ import { calcDailyTarget, calcTDEE } from '../services/calories';
 import { today, dateOffset, fmtShort, dayOfWeek } from '../utils/date';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, ReferenceLine, PieChart, Pie, Cell,
+  CartesianGrid, ReferenceLine, PieChart, Pie, Cell, Legend,
 } from 'recharts';
 
 const sC: React.CSSProperties = { background:'var(--card)',borderRadius:16,padding:20,border:'1px solid var(--bor)',marginBottom:12 };
@@ -30,6 +30,7 @@ export default function DashboardScreen({ profile, onNavigate }: Props) {
   const todayMeals = useLiveQuery(() => db.meals.where('date').equals(t).toArray(), [t]) || [];
   const todayEx = useLiveQuery(() => db.exercises.where('date').equals(t).toArray(), [t]) || [];
   const allMeals = useLiveQuery(() => db.meals.toArray(), []) || [];
+  const allExercises = useLiveQuery(() => db.exercises.toArray(), []) || [];
   const todayHabit = useLiveQuery(() => db.habits.where('date').equals(t).first(), [t]);
 
   const consumed = todayMeals.reduce((s,m) => s+m.calories, 0);
@@ -52,11 +53,17 @@ export default function DashboardScreen({ profile, onNavigate }: Props) {
     if (allMeals.some(m => m.date === dateOffset(-i))) streak++; else break;
   }
 
-  // Week chart
+  // Week chart with offset navigation
+  const [weekOffset, setWeekOffset] = useState(0);
+  const tdee = calcTDEE(profile);
   const wk = Array.from({length:7},(_,i) => {
-    const d = dateOffset(-6+i);
-    return { day: fmtShort(d), 摂取: allMeals.filter(m=>m.date===d).reduce((s,m)=>s+m.calories,0) };
+    const d = dateOffset(weekOffset*7 - 6 + i);
+    const intake = allMeals.filter(m=>m.date===d).reduce((s,m)=>s+m.calories,0);
+    const burn = tdee + allExercises.filter(e=>e.date===d).reduce((s,e)=>s+e.caloriesBurned,0);
+    return { day: fmtShort(d), date: d, 摂取: intake, 消費: burn, 差分: intake - burn };
   });
+  const weekTotal = { 摂取: wk.reduce((s,d)=>s+d.摂取,0), 消費: wk.reduce((s,d)=>s+d.消費,0) };
+  const weekDiff = weekTotal.摂取 - weekTotal.消費;
 
   const tH = todayHabit || { water:0, sleep:0 };
 
@@ -130,17 +137,64 @@ export default function DashboardScreen({ profile, onNavigate }: Props) {
     </div>}
 
     <div style={sC}>
-      <span style={{color:'var(--txt)',fontSize:13,fontWeight:700}}>週間カロリー推移</span>
+      {/* Week navigation */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+        <button onClick={()=>setWeekOffset(weekOffset-1)}
+          style={{background:'none',border:'none',color:'var(--pri)',fontSize:12,cursor:'pointer',padding:'4px 8px'}}>← 前の週</button>
+        <span style={{color:'var(--txt)',fontSize:13,fontWeight:700}}>
+          {weekOffset===0 ? '今週' : `${fmtShort(wk[0].date)}〜${fmtShort(wk[6].date)}`}
+        </span>
+        {weekOffset < 0
+          ? <button onClick={()=>setWeekOffset(weekOffset+1)}
+              style={{background:'none',border:'none',color:'var(--pri)',fontSize:12,cursor:'pointer',padding:'4px 8px'}}>次の週 →</button>
+          : <span style={{width:60}}/>}
+      </div>
+      {weekOffset !== 0 && (
+        <div style={{textAlign:'center',marginBottom:6}}>
+          <button onClick={()=>setWeekOffset(0)}
+            style={{background:'var(--pri-dim)',border:'none',color:'var(--pri)',fontSize:10,padding:'3px 10px',borderRadius:6,cursor:'pointer'}}>
+            今週に戻る
+          </button>
+        </div>
+      )}
+
       <ResponsiveContainer width="100%" height={150}>
-        <BarChart data={wk} barGap={2} margin={{top:12,right:0,bottom:0,left:-12}}>
+        <BarChart data={wk} barGap={2} margin={{top:12,right:4,bottom:0,left:0}}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--bor)"/>
           <XAxis dataKey="day" tick={{fill:'#8B92A5',fontSize:9}} axisLine={false} tickLine={false}/>
           <YAxis tick={{fill:'#8B92A5',fontSize:9}} axisLine={false} tickLine={false} width={36}/>
           <Tooltip contentStyle={{background:'#1A1D27',border:'1px solid #2A2E3B',borderRadius:8,fontSize:11,color:'#E8ECF4'}}/>
-          <ReferenceLine y={target} stroke="#4ADE80" strokeDasharray="4 4"/>
+          <Legend wrapperStyle={{fontSize:10}} iconSize={8}/>
+          <ReferenceLine y={target} stroke="#6C9CFF" strokeDasharray="4 4" label={{value:'目標',fill:'#6C9CFF',fontSize:9,position:'right'}}/>
           <Bar dataKey="摂取" fill="#FBBF24" radius={[4,4,0,0]}/>
+          <Bar dataKey="消費" fill="#4ADE80" radius={[4,4,0,0]}/>
         </BarChart>
       </ResponsiveContainer>
+
+      {/* Daily diff table */}
+      <div style={{marginTop:8}}>
+        <div style={{display:'grid',gridTemplateColumns:'40px 1fr 1fr 1fr',gap:2,fontSize:9,color:'var(--sub)',marginBottom:4}}>
+          <span>日付</span><span style={{textAlign:'right'}}>摂取</span><span style={{textAlign:'right'}}>消費</span><span style={{textAlign:'right'}}>差分</span>
+        </div>
+        {wk.map((d,i) => (
+          <div key={i} style={{display:'grid',gridTemplateColumns:'40px 1fr 1fr 1fr',gap:2,fontSize:11,padding:'3px 0',borderTop:'1px solid var(--bor)'}}>
+            <span style={{color:'var(--sub)',fontSize:10}}>{d.day}</span>
+            <span style={{textAlign:'right',color:'var(--warn)',fontWeight:600}}>{d.摂取}</span>
+            <span style={{textAlign:'right',color:'var(--ok)',fontWeight:600}}>{d.消費}</span>
+            <span style={{textAlign:'right',fontWeight:700,color:d.差分<=0?'var(--ok)':'var(--err)'}}>
+              {d.差分>0?'+':''}{d.差分}
+            </span>
+          </div>
+        ))}
+        <div style={{display:'grid',gridTemplateColumns:'40px 1fr 1fr 1fr',gap:2,fontSize:11,padding:'5px 0',borderTop:'2px solid var(--bor)',fontWeight:700}}>
+          <span style={{color:'var(--txt)',fontSize:10}}>週計</span>
+          <span style={{textAlign:'right',color:'var(--warn)'}}>{weekTotal.摂取}</span>
+          <span style={{textAlign:'right',color:'var(--ok)'}}>{weekTotal.消費}</span>
+          <span style={{textAlign:'right',color:weekDiff<=0?'var(--ok)':'var(--err)'}}>
+            {weekDiff>0?'+':''}{weekDiff}
+          </span>
+        </div>
+      </div>
     </div>
   </div>);
 }

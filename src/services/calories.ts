@@ -52,7 +52,10 @@ export function calcSafeEstimatedDate(p: UserProfile): string | null {
   const daysNeeded = (kgToLose * 7700) / 500;
   const target = new Date();
   target.setDate(target.getDate() + Math.ceil(daysNeeded));
-  return target.toISOString().slice(0, 10);
+  const y = target.getFullYear();
+  const m = String(target.getMonth()+1).padStart(2,'0');
+  const d = String(target.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
 }
 
 /**

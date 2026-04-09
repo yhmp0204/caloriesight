@@ -1,8 +1,11 @@
+import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, upsertHabit } from '../data/db';
+import { db, upsertHabit, deleteHabit } from '../data/db';
 import { today, dateOffset, fmtShort, dayOfWeek } from '../utils/date';
+import type { HabitRecord } from '../types';
 
 const sC: React.CSSProperties = {background:'var(--card)',borderRadius:16,padding:20,border:'1px solid var(--bor)',marginBottom:12};
+const sI: React.CSSProperties = {background:'var(--bg)',color:'var(--txt)',border:'1px solid var(--bor)',borderRadius:10,padding:'10px 14px',fontSize:15,width:'100%',boxSizing:'border-box',outline:'none'};
 
 export default function HabitScreen() {
   const t = today();
@@ -11,6 +14,31 @@ export default function HabitScreen() {
   const allMeals = useLiveQuery(() => db.meals.toArray(), []) || [];
 
   const tH = todayHabit || { date: t, water: 0, sleep: 0 };
+
+  // Edit modal state
+  const [editingHabit, setEditingHabit] = useState<{date:string; habit:HabitRecord|null}|null>(null);
+  const [editWater, setEditWater] = useState('');
+  const [editSleep, setEditSleep] = useState('');
+
+  const openEdit = (date: string) => {
+    const h = allHabits.find(hb => hb.date === date) || null;
+    setEditingHabit({ date, habit: h });
+    setEditWater(String(h?.water || 0));
+    setEditSleep(String(h?.sleep || 0));
+  };
+
+  const handleEditSave = async () => {
+    if (!editingHabit) return;
+    await upsertHabit({ date: editingHabit.date, water: parseInt(editWater)||0, sleep: parseFloat(editSleep)||0 });
+    setEditingHabit(null);
+  };
+
+  const handleEditDelete = async () => {
+    if (!editingHabit?.habit?.id) return;
+    if (!window.confirm('この記録を削除しますか？')) return;
+    await deleteHabit(editingHabit.habit.id);
+    setEditingHabit(null);
+  };
 
   const updateHabit = async (field: 'water'|'sleep', value: number) => {
     await upsertHabit({ ...tH, [field]: value, date: t });
@@ -84,10 +112,13 @@ export default function HabitScreen() {
     {/* Weekly summary */}
     <div style={sC}>
       <span style={{color:'var(--txt)',fontSize:13,fontWeight:700}}>週間サマリー</span>
+      <div style={{color:'var(--sub)',fontSize:10,marginTop:2}}>タップで編集</div>
       <div style={{marginTop:8}}>
         {weekDays.map((d,i) => {
           const h = allHabits.find(hb => hb.date === d) || { water:0, sleep:0 };
-          return (<div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:i<6?'1px solid var(--bor)':'none'}}>
+          return (<button key={i} onClick={()=>openEdit(d)}
+            style={{display:'flex',alignItems:'center',gap:8,padding:'5px 0',borderBottom:i<6?'1px solid var(--bor)':'none',
+              background:'none',border:'none',width:'100%',cursor:'pointer',textAlign:'left'}}>
             <span style={{fontSize:10,color:'var(--sub)',width:36}}>{fmtShort(d)}</span>
             <span style={{fontSize:10,color:'var(--sub)',width:16}}>{dayOfWeek(d)}</span>
             <span style={{fontSize:12}}>{allMeals.some(m=>m.date===d)?'✅':'⬜'}</span>
@@ -99,9 +130,40 @@ export default function HabitScreen() {
               <span style={{fontSize:9}}>😴</span>
               <div style={{flex:1,height:4,background:'var(--bor)',borderRadius:2}}><div style={{height:'100%',background:'var(--acc)',borderRadius:2,width:`${Math.min(100,h.sleep/8*100)}%`}}/></div>
             </div>
-          </div>);
+          </button>);
         })}
       </div>
     </div>
+
+    {/* Edit modal */}
+    {editingHabit && (
+      <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:200,
+        display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
+        onClick={()=>setEditingHabit(null)}>
+        <div style={{...sC,width:'100%',maxWidth:360,margin:0}} onClick={e=>e.stopPropagation()}>
+          <div style={{color:'var(--txt)',fontSize:15,fontWeight:700,marginBottom:12}}>{fmtShort(editingHabit.date)} の記録を編集</div>
+          <div style={{marginBottom:10}}>
+            <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>💧 水分 (ml)</label>
+            <input type="number" value={editWater} onChange={e=>setEditWater(e.target.value)} style={sI}/>
+          </div>
+          <div style={{marginBottom:12}}>
+            <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>😴 睡眠 (時間)</label>
+            <input type="number" step="0.5" value={editSleep} onChange={e=>setEditSleep(e.target.value)} style={sI}/>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            {editingHabit.habit?.id && (
+              <button onClick={handleEditDelete}
+                style={{flex:1,background:'var(--err)',color:'#fff',border:'none',borderRadius:12,padding:'10px',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+                削除
+              </button>
+            )}
+            <button onClick={handleEditSave}
+              style={{flex:1,background:'var(--pri)',color:'#fff',border:'none',borderRadius:12,padding:'10px',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+              保存
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
   </div>);
 }

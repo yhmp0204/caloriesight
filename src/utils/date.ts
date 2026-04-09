@@ -1,11 +1,15 @@
-/** 今日の日付 YYYY-MM-DD */
-export const today = (): string => new Date().toISOString().slice(0, 10);
+/** ローカル時間でYYYY-MM-DD文字列を生成 */
+const toLocal = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
-/** N日前/後の日付 YYYY-MM-DD */
+/** 今日の日付 YYYY-MM-DD（ローカル時間） */
+export const today = (): string => toLocal(new Date());
+
+/** N日前/後の日付 YYYY-MM-DD（ローカル時間） */
 export const dateOffset = (offset: number): string => {
   const d = new Date();
   d.setDate(d.getDate() + offset);
-  return d.toISOString().slice(0, 10);
+  return toLocal(d);
 };
 
 /** MM/DD 形式 */

@@ -13,8 +13,9 @@ import WeightScreen from './pages/WeightTracker';
 import ExerciseScreen from './pages/ExerciseTracker';
 import HabitScreen from './pages/HabitTracker';
 import SettingsScreen from './pages/Settings';
+import CoachingScreen from './pages/Coaching';
 
-type TabId = 'home' | 'meal' | 'weight' | 'exercise' | 'habit' | 'settings';
+type TabId = 'home' | 'meal' | 'weight' | 'exercise' | 'habit' | 'coaching' | 'settings';
 
 const TABS: { id: TabId; icon: string; label: string }[] = [
   { id: 'home', icon: '📊', label: 'ホーム' },
@@ -22,7 +23,7 @@ const TABS: { id: TabId; icon: string; label: string }[] = [
   { id: 'weight', icon: '⚖️', label: '体重' },
   { id: 'exercise', icon: '🏃', label: '運動' },
   { id: 'habit', icon: '💧', label: '習慣' },
-  { id: 'settings', icon: '⚙️', label: '設定' },
+  { id: 'coaching', icon: '🤖', label: 'AI' },
 ];
 
 export default function App() {
@@ -90,7 +91,11 @@ export default function App() {
             CalorieSight
           </span>
         </div>
-        <span style={{ color: 'var(--sub)', fontSize: 10 }}>v0.2</span>
+        <button onClick={() => setTab('settings')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20,
+            color: tab === 'settings' ? 'var(--pri)' : 'var(--sub)', padding: 4 }}>
+          ⚙️
+        </button>
       </header>
 
       {/* Content */}
@@ -109,6 +114,9 @@ export default function App() {
         )}
         {tab === 'habit' && (
           <HabitScreen />
+        )}
+        {tab === 'coaching' && effectiveProfile && (
+          <CoachingScreen profile={effectiveProfile} />
         )}
         {tab === 'settings' && (
           <SettingsScreen
