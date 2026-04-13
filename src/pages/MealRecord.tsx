@@ -28,8 +28,12 @@ export default function MealScreen(_props: Props) {
   const [manF, setManF] = useState('');
   const [manC, setManC] = useState('');
 
+  // Input date state (for new meals)
+  const [inputDate, setInputDate] = useState(today());
+
   // Edit modal state
   const [editingMeal, setEditingMeal] = useState<Meal|null>(null);
+  const [editDate, setEditDate] = useState('');
   const [editName, setEditName] = useState('');
   const [editCal, setEditCal] = useState('');
   const [editP, setEditP] = useState('');
@@ -56,6 +60,7 @@ export default function MealScreen(_props: Props) {
 
   const openEdit = (m: Meal) => {
     setEditingMeal(m);
+    setEditDate(m.date);
     setEditName(m.dishName);
     setEditCal(String(m.calories));
     setEditP(String(m.protein));
@@ -66,7 +71,7 @@ export default function MealScreen(_props: Props) {
   const handleEditSave = async () => {
     if (!editingMeal?.id || !editName || !editCal) return;
     await updateMeal(editingMeal.id, {
-      dishName: editName, calories: parseInt(editCal)||0,
+      date: editDate, dishName: editName, calories: parseInt(editCal)||0,
       protein: parseInt(editP)||0, fat: parseInt(editF)||0, carbs: parseInt(editC)||0,
     });
     setEditingMeal(null);
@@ -108,27 +113,27 @@ export default function MealScreen(_props: Props) {
   const confirm = async (food: FoodItem & {confidence?:number}, a=100) => {
     const m = a/100;
     await addMeal({
-      date: todayStr, mealType, dishName: food.name, emoji: food.emoji || '🍽️',
+      date: inputDate, mealType, dishName: food.name, emoji: food.emoji || '🍽️',
       calories: Math.round(food.cal*m), protein: Math.round(food.p*m),
       fat: Math.round(food.f*m), carbs: Math.round(food.c*m),
       source: food.confidence ? 'ai_gemini' : 'manual',
       confidence: food.confidence || 1, createdAt: Date.now(),
     });
-    setMode('home'); setSel(null); setAdj(100);
+    setMode('home'); setSel(null); setAdj(100); setInputDate(todayStr);
   };
 
   const confirmManual = async () => {
     if (!manName || !manCal) return;
     await addMeal({
-      date: todayStr, mealType, dishName: manName, emoji: '✏️',
+      date: inputDate, mealType, dishName: manName, emoji: '✏️',
       calories: parseInt(manCal) || 0, protein: parseInt(manP) || 0,
       fat: parseInt(manF) || 0, carbs: parseInt(manC) || 0,
       source: 'manual', confidence: 1, createdAt: Date.now(),
     });
-    setMode('home'); setManName(''); setManCal(''); setManP(''); setManF(''); setManC('');
+    setMode('home'); setManName(''); setManCal(''); setManP(''); setManF(''); setManC(''); setInputDate(todayStr);
   };
 
-  const resetToHome = () => { setMode('home'); setSel(null); setAdj(100); };
+  const resetToHome = () => { setMode('home'); setSel(null); setAdj(100); setInputDate(todayStr); };
 
   const BackBtn = ({to}:{to?:Mode}) => (
     <button onClick={()=>to?setMode(to):resetToHome()} style={{background:'none',border:'none',color:'var(--pri)',fontSize:13,cursor:'pointer',marginBottom:8}}>← 戻る</button>
@@ -141,6 +146,10 @@ export default function MealScreen(_props: Props) {
       onClick={()=>setEditingMeal(null)}>
       <div style={{...sC,width:'100%',maxWidth:360,margin:0}} onClick={e=>e.stopPropagation()}>
         <div style={{color:'var(--txt)',fontSize:15,fontWeight:700,marginBottom:12}}>食事を編集</div>
+        <div style={{marginBottom:8}}>
+          <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>📅 記録日</label>
+          <input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} style={sI}/>
+        </div>
         <div style={{marginBottom:8}}>
           <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>料理名</label>
           <input value={editName} onChange={e=>setEditName(e.target.value)} style={sI}/>
@@ -259,6 +268,10 @@ export default function MealScreen(_props: Props) {
             <div key={i} style={{textAlign:'center'}}><div style={{fontSize:16,fontWeight:700,color:n.c}}>{n.v}g</div><div style={{fontSize:9,color:'var(--sub)'}}>{n.l}</div></div>
           ))}
         </div>
+        <div style={{marginBottom:10,textAlign:'left'}}>
+          <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>📅 記録日</label>
+          <input type="date" value={inputDate} onChange={e=>setInputDate(e.target.value)} style={sI}/>
+        </div>
         <div style={{marginBottom:14}}>
           <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>量の調整: {adj}%</label>
           <input type="range" min={50} max={200} value={adj} onChange={e=>setAdj(+e.target.value)} style={{width:'100%'}}/>
@@ -315,6 +328,11 @@ export default function MealScreen(_props: Props) {
         <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:14}}>
           <span style={{fontSize:22}}>✏️</span>
           <div style={{color:'var(--txt)',fontSize:15,fontWeight:700}}>手入力で記録</div>
+        </div>
+
+        <div style={{marginBottom:12}}>
+          <label style={{color:'var(--sub)',fontSize:11,display:'block',marginBottom:4}}>📅 記録日</label>
+          <input type="date" value={inputDate} onChange={e=>setInputDate(e.target.value)} style={sI}/>
         </div>
 
         <div style={{marginBottom:12}}>
