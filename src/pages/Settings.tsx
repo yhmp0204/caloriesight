@@ -1,20 +1,35 @@
 import { useState } from 'react';
 import type { UserProfile } from '../types';
+import type { User } from '@supabase/supabase-js';
 import { calcBMR, calcTDEE, calcDailyTarget, calcRawDailyTarget, calcSafeEstimatedDate, assessGoalSafety } from '../services/calories';
 import { getApiKeyStatus, getGeminiKey, getClaudeKey, setGeminiKey, setClaudeKey } from '../services/apikeys';
+import { auth } from '../services/supabase';
 
-interface Props { profile?: UserProfile; onSave: (p: UserProfile) => void; }
+interface Props {
+  profile?: UserProfile;
+  onSave: (p: UserProfile) => void;
+  authUser: User | null;
+  syncing: boolean;
+  onSync: () => void;
+}
 
 const sC: React.CSSProperties = { background:'var(--card)',borderRadius:16,padding:20,border:'1px solid var(--bor)',marginBottom:12 };
 const sI: React.CSSProperties = { background:'var(--bg)',color:'var(--txt)',border:'1px solid var(--bor)',borderRadius:10,padding:'10px 14px',fontSize:15,width:'100%',boxSizing:'border-box',outline:'none' };
 
-export default function SettingsScreen({ profile, onSave }: Props) {
+export default function SettingsScreen({ profile, onSave, authUser, syncing, onSync }: Props) {
   const defaults: UserProfile = { height:0,age:0,weight:0,gender:'male',activityLevel:1.2,targetWeight:0,targetDate:'' };
   const [f,setF] = useState<UserProfile>(profile || defaults);
   const [saved,setSaved] = useState(false);
   const [gemKey,setGemKey] = useState(getGeminiKey());
   const [claKey,setClaKey] = useState(getClaudeKey());
   const [keySaved,setKeySaved] = useState(false);
+
+  // Auth form state
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPass, setAuthPass] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authSuccess, setAuthSuccess] = useState('');
 
   const bmr = calcBMR(f);
   const tdee = calcTDEE(f);
@@ -27,6 +42,27 @@ export default function SettingsScreen({ profile, onSave }: Props) {
   const saveProfile = () => { onSave(f); setSaved(true); setTimeout(()=>setSaved(false),2000); };
   const saveKeys = () => { setGeminiKey(gemKey.trim()); setClaudeKey(claKey.trim()); setKeySaved(true); setTimeout(()=>setKeySaved(false),2000); };
 
+  const handleSignUp = async () => {
+    setAuthLoading(true); setAuthError(''); setAuthSuccess('');
+    const { error } = await auth.signUp(authEmail, authPass);
+    if (error) { setAuthError(error.message); }
+    else { setAuthSuccess('登録完了！ログインしました。'); }
+    setAuthLoading(false);
+  };
+
+  const handleSignIn = async () => {
+    setAuthLoading(true); setAuthError(''); setAuthSuccess('');
+    const { error } = await auth.signIn(authEmail, authPass);
+    if (error) { setAuthError(error.message); }
+    else { setAuthSuccess('ログインしました！同期を開始します...'); onSync(); }
+    setAuthLoading(false);
+  };
+
+  const handleSignOut = async () => {
+    await auth.signOut();
+    setAuthSuccess(''); setAuthError('');
+  };
+
   const F = ({l,children}:{l:string,children:React.ReactNode}) => (
     <div><label style={{color:'var(--sub)',fontSize:10,display:'block',marginBottom:3}}>{l}</label>{children}</div>
   );
@@ -37,6 +73,62 @@ export default function SettingsScreen({ profile, onSave }: Props) {
 
   return (<div className="fade-in">
     <h2 style={{color:'var(--txt)',fontSize:18,fontWeight:700,margin:'0 0 12px'}}>プロフィール設定</h2>
+
+    {/* クラウド同期 */}
+    <div style={sC}>
+      <div style={{color:'var(--txt)',fontSize:13,fontWeight:700,marginBottom:10}}>☁️ クラウド同期</div>
+      {authUser ? (
+        <>
+          <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:10}}>
+            <span style={{color:'var(--ok)',fontSize:12}}>🟢</span>
+            <span style={{color:'var(--txt)',fontSize:12}}>{authUser.email}</span>
+          </div>
+          <div style={{fontSize:11,color:'var(--sub)',marginBottom:10,lineHeight:1.6}}>
+            ログイン中。データは自動的にクラウドに保存されます。他の端末からも同じアカウントでアクセスできます。
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={onSync} disabled={syncing}
+              style={{flex:1,background:syncing?'var(--bor)':'var(--pri)',color:'#fff',border:'none',borderRadius:12,padding:'10px',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+              {syncing ? '同期中...' : '手動で同期'}
+            </button>
+            <button onClick={handleSignOut}
+              style={{flex:1,background:'var(--card)',color:'var(--sub)',border:'1px solid var(--bor)',borderRadius:12,padding:'10px',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+              ログアウト
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{fontSize:11,color:'var(--sub)',marginBottom:10,lineHeight:1.6}}>
+            ログインすると、スマホとPCでデータを同期できます。
+          </div>
+          <div style={{marginBottom:8}}>
+            <label style={{color:'var(--sub)',fontSize:10,display:'block',marginBottom:3}}>メールアドレス</label>
+            <input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)}
+              placeholder="you@example.com" style={sI}/>
+          </div>
+          <div style={{marginBottom:10}}>
+            <label style={{color:'var(--sub)',fontSize:10,display:'block',marginBottom:3}}>パスワード</label>
+            <input type="password" value={authPass} onChange={e=>setAuthPass(e.target.value)}
+              placeholder="6文字以上" style={sI}/>
+          </div>
+          {authError && <div style={{color:'var(--err)',fontSize:11,marginBottom:8}}>{authError}</div>}
+          {authSuccess && <div style={{color:'var(--ok)',fontSize:11,marginBottom:8}}>{authSuccess}</div>}
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={handleSignIn} disabled={authLoading || !authEmail || !authPass}
+              style={{flex:1,background:'var(--pri)',color:'#fff',border:'none',borderRadius:12,padding:'10px',fontSize:13,fontWeight:600,cursor:'pointer',
+                opacity:authLoading||!authEmail||!authPass?0.5:1}}>
+              ログイン
+            </button>
+            <button onClick={handleSignUp} disabled={authLoading || !authEmail || !authPass}
+              style={{flex:1,background:'var(--acc)',color:'#fff',border:'none',borderRadius:12,padding:'10px',fontSize:13,fontWeight:600,cursor:'pointer',
+                opacity:authLoading||!authEmail||!authPass?0.5:1}}>
+              新規登録
+            </button>
+          </div>
+        </>
+      )}
+    </div>
 
     {/* 基本情報 */}
     <div style={sC}>
@@ -71,7 +163,6 @@ export default function SettingsScreen({ profile, onSave }: Props) {
     {bmr > 0 && <div style={{...sC,background:'linear-gradient(135deg,var(--pri-dim),var(--card))'}}>
       <div style={{color:'var(--txt)',fontSize:13,fontWeight:700,marginBottom:12}}>自動計算結果</div>
 
-      {/* 基本数値 */}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:16}}>
         <div style={{textAlign:'center',padding:10,background:'var(--bg)',borderRadius:10}}>
           <div style={{fontSize:10,color:'var(--sub)',marginBottom:4}}>基礎代謝 (BMR)</div>
@@ -85,10 +176,8 @@ export default function SettingsScreen({ profile, onSave }: Props) {
         </div>
       </div>
 
-      {/* 2種類の目標摂取カロリー */}
       {hasGoal && <>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
-          {/* 期限通り */}
           <div style={{padding:12,borderRadius:10,border:`1px solid ${rawTarget < bmr ? 'var(--err)' : 'var(--bor)'}`,background:'var(--bg)'}}>
             <div style={{fontSize:10,color:'var(--sub)',marginBottom:4}}>📅 期限通りの目標</div>
             <div style={{fontSize:24,fontWeight:800,color: rawTarget < bmr ? 'var(--err)' : 'var(--warn)'}}>{rawTarget}</div>
@@ -96,7 +185,6 @@ export default function SettingsScreen({ profile, onSave }: Props) {
             <div style={{fontSize:9,color:'var(--sub)',marginTop:4}}>赤字: {tdee - rawTarget} kcal/日</div>
             {rawTarget < bmr && <div style={{fontSize:9,color:'var(--err)',marginTop:2,fontWeight:600}}>⚠️ 基礎代謝以下</div>}
           </div>
-          {/* 健康セーフ */}
           <div style={{padding:12,borderRadius:10,border:'2px solid var(--ok)',background:'var(--ok-dim)'}}>
             <div style={{fontSize:10,color:'var(--ok)',marginBottom:4,fontWeight:600}}>💚 おすすめ目標</div>
             <div style={{fontSize:24,fontWeight:800,color:'var(--ok)'}}>{safeTarget}</div>
@@ -106,7 +194,6 @@ export default function SettingsScreen({ profile, onSave }: Props) {
           </div>
         </div>
 
-        {/* 安全ペースの到達予定日 */}
         {safeDate && rawTarget !== safeTarget && (
           <div style={{padding:10,background:'var(--bg)',borderRadius:10,marginBottom:12}}>
             <div style={{fontSize:11,color:'var(--sub)',lineHeight:1.6}}>
@@ -118,7 +205,6 @@ export default function SettingsScreen({ profile, onSave }: Props) {
           </div>
         )}
 
-        {/* 安全性判定 */}
         <div style={{padding:'8px 12px',background:safetyBg,borderRadius:8,fontSize:11,color:safetyColor,lineHeight:1.5}}>
           {safetyIcon} {safety.message}
         </div>
@@ -128,7 +214,6 @@ export default function SettingsScreen({ profile, onSave }: Props) {
         </div>
       </>}
 
-      {/* 目標未設定時 */}
       {!hasGoal && <div style={{textAlign:'center',padding:8}}>
         <div style={{fontSize:11,color:'var(--sub)'}}>目標体重と期限を設定すると、目標摂取カロリーが計算されます</div>
       </div>}
@@ -175,7 +260,7 @@ export default function SettingsScreen({ profile, onSave }: Props) {
     </div>
 
     <div style={{marginTop:16,padding:12,background:'var(--bg)',borderRadius:10,border:'1px solid var(--bor)',textAlign:'center'}}>
-      <div style={{fontSize:11,color:'var(--sub)'}}>CalorieSight v0.3 | Powered by Gemini + Claude API</div>
+      <div style={{fontSize:11,color:'var(--sub)'}}>CalorieSight v0.4 | Powered by Gemini + Claude + Supabase</div>
     </div>
   </div>);
 }

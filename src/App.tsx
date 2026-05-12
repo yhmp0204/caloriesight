@@ -1,11 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, getProfile, saveProfile } from './data/db';
+import { db, getProfile, saveProfile, enableCloudSync, disableCloudSync, syncFromCloud } from './data/db';
+import { auth } from './services/supabase';
 import type { UserProfile } from './types';
-
-// ── Screens (各画面のコンポーネント) ──
-// 本番ではこれらを各ファイルに分割する
-// 現段階ではApp.tsxに全て含めて動作確認を容易にする
+import type { User } from '@supabase/supabase-js';
 
 import DashboardScreen from './pages/Dashboard';
 import MealScreen from './pages/MealRecord';
@@ -30,13 +28,13 @@ export default function App() {
   const [tab, setTab] = useState<TabId>('settings');
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
-  // 最新の体重記録を取得（TDEE計算に使用）
   const latestBodyRecord = useLiveQuery(
     () => db.bodyRecords.orderBy('date').last()
   );
 
-  // 最新体重を反映した実効プロフィール（設定画面以外で使用）
   const effectiveProfile = useMemo(() => {
     if (!profile) return null;
     if (latestBodyRecord?.weight) {
@@ -45,22 +43,64 @@ export default function App() {
     return profile;
   }, [profile, latestBodyRecord]);
 
-  // 初回ロード
+  // 認証状態の監視
   useEffect(() => {
-    getProfile().then((p) => {
+    const { data: { subscription } } = auth.onAuthStateChange(async (_event, session) => {
+      const user = session?.user ?? null;
+      setAuthUser(user);
+      if (user) {
+        enableCloudSync(user.id);
+      } else {
+        disableCloudSync();
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // 初回ロード + ログイン時の同期
+  useEffect(() => {
+    (async () => {
+      const { data: { session } } = await auth.getSession();
+      const user = session?.user ?? null;
+      setAuthUser(user);
+
+      if (user) {
+        enableCloudSync(user.id);
+        setSyncing(true);
+        try {
+          await syncFromCloud();
+        } catch (e) {
+          console.error('Sync error:', e);
+        }
+        setSyncing(false);
+      }
+
+      const p = await getProfile();
       if (p) {
         setProfile(p);
         setTab('home');
       }
       setLoading(false);
-    });
+    })();
   }, []);
 
-  // プロフィール保存
   const handleSaveProfile = async (p: UserProfile) => {
     await saveProfile(p);
     setProfile(p);
     setTab('home');
+  };
+
+  const handleSync = async () => {
+    if (!authUser) return;
+    setSyncing(true);
+    try {
+      await syncFromCloud();
+      const p = await getProfile();
+      if (p) setProfile(p);
+    } catch (e) {
+      console.error('Sync error:', e);
+    }
+    setSyncing(false);
   };
 
   if (loading) {
@@ -71,7 +111,9 @@ export default function App() {
         <div style={{ color: 'var(--pri)', fontSize: 24, fontWeight: 800, letterSpacing: 2 }}>
           CalorieSight
         </div>
-        <div style={{ color: 'var(--sub)', fontSize: 12 }}>読み込み中...</div>
+        <div style={{ color: 'var(--sub)', fontSize: 12 }}>
+          {syncing ? '☁️ クラウドと同期中...' : '読み込み中...'}
+        </div>
       </div>
     );
   }
@@ -90,6 +132,9 @@ export default function App() {
           <span style={{ color: 'var(--pri)', fontSize: 16, fontWeight: 800, letterSpacing: 1 }}>
             CalorieSight
           </span>
+          {authUser && (
+            <span style={{ fontSize: 10, color: 'var(--ok)', marginLeft: 4 }}>☁️</span>
+          )}
         </div>
         <button onClick={() => setTab('settings')}
           style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20,
@@ -97,6 +142,14 @@ export default function App() {
           ⚙️
         </button>
       </header>
+
+      {/* Sync indicator */}
+      {syncing && (
+        <div style={{ background: 'var(--pri-dim)', padding: '4px 16px', fontSize: 11,
+          color: 'var(--pri)', textAlign: 'center' }}>
+          ☁️ 同期中...
+        </div>
+      )}
 
       {/* Content */}
       <main style={{ padding: '6px 14px 76px' }}>
@@ -122,6 +175,9 @@ export default function App() {
           <SettingsScreen
             profile={profile || undefined}
             onSave={handleSaveProfile}
+            authUser={authUser}
+            syncing={syncing}
+            onSync={handleSync}
           />
         )}
       </main>

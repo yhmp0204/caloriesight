@@ -7,6 +7,7 @@ export type MealSource = 'barcode' | 'ai_gemini' | 'ai_claude' | 'manual';
 // ── 食事記録 ──
 export interface Meal {
   id?: number;
+  remoteId?: number;
   date: string;          // YYYY-MM-DD
   mealType: MealType;
   dishName: string;
@@ -24,6 +25,7 @@ export interface Meal {
 // ── 体重記録 ──
 export interface BodyRecord {
   id?: number;
+  remoteId?: number;
   date: string;
   weight: number;
   bodyFatPct: number | null;
@@ -32,6 +34,7 @@ export interface BodyRecord {
 // ── 運動記録 ──
 export interface Exercise {
   id?: number;
+  remoteId?: number;
   date: string;
   activity: string;
   durationMin: number;
@@ -42,6 +45,7 @@ export interface Exercise {
 // ── 生活習慣 ──
 export interface HabitRecord {
   id?: number;
+  remoteId?: number;
   date: string;
   water: number;     // ml
   sleep: number;     // hours
