@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, addMeal, updateMeal, deleteMeal } from '../data/db';
 import { recognizeFood, getApiKeyStatus } from '../services/vision';
@@ -9,15 +9,16 @@ const sC: React.CSSProperties = {background:'var(--card)',borderRadius:16,paddin
 const sI: React.CSSProperties = {background:'var(--bg)',color:'var(--txt)',border:'1px solid var(--bor)',borderRadius:10,padding:'10px 14px',fontSize:15,width:'100%',boxSizing:'border-box',outline:'none'};
 const sB: React.CSSProperties = {background:'var(--pri)',color:'#fff',border:'none',borderRadius:12,padding:'12px 24px',fontSize:15,fontWeight:600,cursor:'pointer',width:'100%'};
 
-interface Props { profile: UserProfile; }
+interface Props { profile: UserProfile; jumpToDate?: string; onJumpConsumed?: () => void; }
 
 type Mode = 'home'|'camera'|'aiResult'|'confirm'|'manual'|'history'|'dayDetail';
 
-export default function MealScreen(_props: Props) {
+export default function MealScreen({ jumpToDate, onJumpConsumed }: Props) {
   const [mode, setMode] = useState<Mode>('home');
   const [mealType, setMealType] = useState<MealType>('lunch');
   const [sel, setSel] = useState<(FoodItem & {confidence?:number})|null>(null);
   const [adj, setAdj] = useState(100);
+  const [confirmName, setConfirmName] = useState('');
   const [aiRes, setAiRes] = useState<AIRecognitionResult[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
 
@@ -42,6 +43,15 @@ export default function MealScreen(_props: Props) {
 
   // History state
   const [viewDate, setViewDate] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    if (jumpToDate) {
+      setViewDate(jumpToDate);
+      setMode('dayDetail');
+      onJumpConsumed?.();
+    }
+  }, [jumpToDate]);
 
   const todayStr = today();
   const todayMeals = useLiveQuery(() => db.meals.where('date').equals(todayStr).toArray(), [todayStr]) || [];
@@ -113,13 +123,13 @@ export default function MealScreen(_props: Props) {
   const confirm = async (food: FoodItem & {confidence?:number}, a=100) => {
     const m = a/100;
     await addMeal({
-      date: inputDate, mealType, dishName: food.name, emoji: food.emoji || '🍽️',
+      date: inputDate, mealType, dishName: confirmName || food.name, emoji: food.emoji || '🍽️',
       calories: Math.round(food.cal*m), protein: Math.round(food.p*m),
       fat: Math.round(food.f*m), carbs: Math.round(food.c*m),
       source: food.confidence ? 'ai_gemini' : 'manual',
       confidence: food.confidence || 1, createdAt: Date.now(),
     });
-    setMode('home'); setSel(null); setAdj(100); setInputDate(todayStr);
+    setMode('home'); setSel(null); setAdj(100); setConfirmName(''); setInputDate(todayStr);
   };
 
   const confirmManual = async () => {
@@ -133,7 +143,7 @@ export default function MealScreen(_props: Props) {
     setMode('home'); setManName(''); setManCal(''); setManP(''); setManF(''); setManC(''); setInputDate(todayStr);
   };
 
-  const resetToHome = () => { setMode('home'); setSel(null); setAdj(100); setInputDate(todayStr); };
+  const resetToHome = () => { setMode('home'); setSel(null); setAdj(100); setConfirmName(''); setInputDate(todayStr); };
 
   const BackBtn = ({to}:{to?:Mode}) => (
     <button onClick={()=>to?setMode(to):resetToHome()} style={{background:'none',border:'none',color:'var(--pri)',fontSize:13,cursor:'pointer',marginBottom:8}}>← 戻る</button>
@@ -227,12 +237,23 @@ export default function MealScreen(_props: Props) {
 
   // ── History view ──
   if (mode==='history') {
+    const q = searchQuery.toLowerCase();
+    const filteredMeals = q ? allMeals.filter(m => m.dishName.toLowerCase().includes(q)) : [];
+    const filteredByDate = q ? filteredMeals.reduce<Record<string, Meal[]>>((acc, m) => {
+      (acc[m.date] = acc[m.date] || []).push(m); return acc;
+    }, {}) : mealsByDate;
+    const filteredDates = q ? Object.keys(filteredByDate) : dates;
+
     return (<div className="fade-in">
       <BackBtn/>
       <h2 style={{color:'var(--txt)',fontSize:18,fontWeight:700,margin:'0 0 12px'}}>過去の食事記録</h2>
-      {dates.length === 0 && <div style={{color:'var(--sub)',fontSize:13,textAlign:'center',padding:20}}>記録がありません</div>}
-      {dates.map(d => {
-        const meals = mealsByDate[d];
+      <div style={{marginBottom:12}}>
+        <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
+          placeholder="料理名で検索..." style={{...sI,fontSize:13}}/>
+      </div>
+      {filteredDates.length === 0 && <div style={{color:'var(--sub)',fontSize:13,textAlign:'center',padding:20}}>{q?'該当する記録がありません':'記録がありません'}</div>}
+      {filteredDates.map(d => {
+        const meals = filteredByDate[d];
         const total = meals.reduce((s,m)=>s+m.calories,0);
         return (
           <button key={d} onClick={()=>{setViewDate(d);setMode('dayDetail');}}
@@ -260,7 +281,8 @@ export default function MealScreen(_props: Props) {
       <BackBtn to={sel.confidence?'aiResult':'home'}/>
       <div style={{...sC,textAlign:'center'}}>
         <div style={{fontSize:48,marginBottom:4}}>{sel.emoji||'🍽️'}</div>
-        <div style={{fontSize:18,fontWeight:700,color:'var(--txt)'}}>{sel.name}</div>
+        <input value={confirmName} onChange={e=>setConfirmName(e.target.value)}
+          style={{...sI,fontSize:18,fontWeight:700,textAlign:'center',marginBottom:4}}/>
         {sel.confidence && <div style={{marginTop:6,fontSize:10,color:'var(--sub)'}}>AI確信度: <span style={{color:sel.confidence>0.85?'var(--ok)':'var(--warn)',fontWeight:700}}>{Math.round(sel.confidence*100)}%</span></div>}
         <div style={{fontSize:34,fontWeight:800,color:'var(--warn)',margin:'14px 0 6px'}}>{Math.round(sel.cal*m)} kcal</div>
         <div style={{display:'flex',justifyContent:'center',gap:20,marginBottom:16}}>
@@ -291,7 +313,7 @@ export default function MealScreen(_props: Props) {
         <div style={{fontSize:10,color:'var(--sub)'}}>Gemini Vision AI</div>
       </div>
       {aiRes.map((food,i) => (
-        <button key={i} onClick={()=>{setSel(food);setMode('confirm');}} style={{...sC,display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',textAlign:'left',width:'100%'}}>
+        <button key={i} onClick={()=>{setSel(food);setConfirmName(food.name);setMode('confirm');}} style={{...sC,display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',textAlign:'left',width:'100%'}}>
           <div style={{display:'flex',alignItems:'center',gap:10}}>
             <span style={{fontSize:28}}>{food.emoji}</span>
             <div><div style={{color:'var(--txt)',fontSize:14,fontWeight:600}}>{food.name}</div>
@@ -426,7 +448,7 @@ export default function MealScreen(_props: Props) {
     {todayMeals.length > 0 && <div style={{...sC,marginTop:12}}>
       <span style={{color:'var(--txt)',fontSize:13,fontWeight:700}}>今日の記録 ({todayMeals.reduce((s,m)=>s+m.calories,0)} kcal)</span>
       <div style={{color:'var(--sub)',fontSize:10,marginTop:2}}>タップで編集</div>
-      {todayMeals.map((m,i) => <MealRow key={m.id||i} m={m}/>)}
+      {todayMeals.map((m,i) => <MealRow key={m.id||i} m={m} showCopy/>)}
     </div>}
 
     {editModal}

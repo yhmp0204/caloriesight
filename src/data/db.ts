@@ -3,7 +3,7 @@ import type { Meal, BodyRecord, Exercise, HabitRecord, UserProfile } from '../ty
 import {
   remotePushMeal, remoteUpdateMeal, remoteDeleteMeal, remotePullMeals,
   remotePushBodyRecord, remoteDeleteBodyRecord, remotePullBodyRecords,
-  remotePushExercise, remoteDeleteExercise, remotePullExercises,
+  remotePushExercise, remoteUpdateExercise, remoteDeleteExercise, remotePullExercises,
   remotePushHabit, remoteDeleteHabit, remotePullHabits,
   remotePushProfile, remotePullProfile,
 } from '../services/supabase';
@@ -146,6 +146,26 @@ export async function addExercise(exercise: Omit<Exercise, 'id'>): Promise<numbe
     }).catch(console.error);
   }
   return id;
+}
+
+export async function updateExercise(id: number, changes: Partial<Exercise>): Promise<void> {
+  await db.exercises.update(id, changes);
+  if (_syncUserId) {
+    const ex = await db.exercises.get(id);
+    if (ex?.remoteId) {
+      remoteUpdateExercise(ex.remoteId, changes).catch(console.error);
+    }
+  }
+}
+
+export async function deleteExercise(id: number): Promise<void> {
+  if (_syncUserId) {
+    const ex = await db.exercises.get(id);
+    if (ex?.remoteId) {
+      remoteDeleteExercise(ex.remoteId).catch(console.error);
+    }
+  }
+  await db.exercises.delete(id);
 }
 
 // ── Habits ──

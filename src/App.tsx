@@ -30,6 +30,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [mealJumpDate, setMealJumpDate] = useState('');
 
   const latestBodyRecord = useLiveQuery(
     () => db.bodyRecords.orderBy('date').last()
@@ -154,10 +155,13 @@ export default function App() {
       {/* Content */}
       <main style={{ padding: '6px 14px 76px' }}>
         {tab === 'home' && effectiveProfile && (
-          <DashboardScreen profile={effectiveProfile} onNavigate={setTab} />
+          <DashboardScreen profile={effectiveProfile} onNavigate={(t, date) => {
+            if (date) setMealJumpDate(date);
+            setTab(t);
+          }} />
         )}
         {tab === 'meal' && effectiveProfile && (
-          <MealScreen profile={effectiveProfile} />
+          <MealScreen profile={effectiveProfile} jumpToDate={mealJumpDate} onJumpConsumed={() => setMealJumpDate('')} />
         )}
         {tab === 'weight' && effectiveProfile && (
           <WeightScreen profile={effectiveProfile} />

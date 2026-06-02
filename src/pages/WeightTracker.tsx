@@ -12,6 +12,7 @@ const sB: React.CSSProperties = {background:'var(--pri)',color:'#fff',border:'no
 interface Props { profile: UserProfile; }
 
 export default function WeightScreen({ profile }: Props) {
+  const [inputDate, setInputDate] = useState(today());
   const [wt, setWt] = useState('');
   const [fat, setFat] = useState('');
   const [listOpen, setListOpen] = useState(false);
@@ -19,18 +20,23 @@ export default function WeightScreen({ profile }: Props) {
 
   // Edit modal state
   const [editingRec, setEditingRec] = useState<BodyRecord|null>(null);
+  const [editDate, setEditDate] = useState('');
   const [editWt, setEditWt] = useState('');
   const [editFat, setEditFat] = useState('');
 
   const openEdit = (r: BodyRecord) => {
     setEditingRec(r);
+    setEditDate(r.date);
     setEditWt(String(r.weight));
     setEditFat(r.bodyFatPct != null ? String(r.bodyFatPct) : '');
   };
 
   const handleEditSave = async () => {
-    if (!editingRec || !editWt) return;
-    await upsertBodyRecord({ date: editingRec.date, weight: parseFloat(editWt), bodyFatPct: editFat ? parseFloat(editFat) : null });
+    if (!editingRec || !editWt || !editDate) return;
+    if (editDate !== editingRec.date && editingRec.id) {
+      await deleteBodyRecord(editingRec.id);
+    }
+    await upsertBodyRecord({ date: editDate, weight: parseFloat(editWt), bodyFatPct: editFat ? parseFloat(editFat) : null });
     setEditingRec(null);
   };
 
@@ -43,14 +49,14 @@ export default function WeightScreen({ profile }: Props) {
 
   const doSave = async () => {
     if (!wt) return;
-    await upsertBodyRecord({ date: today(), weight: parseFloat(wt), bodyFatPct: fat ? parseFloat(fat) : null });
-    setWt(''); setFat('');
+    await upsertBodyRecord({ date: inputDate, weight: parseFloat(wt), bodyFatPct: fat ? parseFloat(fat) : null });
+    setWt(''); setFat(''); setInputDate(today());
   };
 
   const cd = weights.slice(-30).map((w, i, a) => {
-    const win = a.slice(Math.max(0,i-6), i+1);
+    const win = a.slice(Math.max(0,i-13), i+1);
     const avg = win.reduce((s,x) => s+x.weight, 0) / win.length;
-    return { date: fmtShort(w.date), 体重: w.weight, '7日平均': +avg.toFixed(1) };
+    return { date: fmtShort(w.date), 体重: w.weight, '14日平均': +avg.toFixed(1) };
   });
 
   const lt = weights.length>0 ? weights[weights.length-1].weight : null;
@@ -84,14 +90,18 @@ export default function WeightScreen({ profile }: Props) {
           {profile.targetWeight>0 && <ReferenceLine y={profile.targetWeight} stroke="#4ADE80" strokeDasharray="5 5" label={{value:'目標',fill:'#4ADE80',fontSize:9}}/>}
           <Tooltip contentStyle={{background:'#1A1D27',border:'1px solid #2A2E3B',borderRadius:8,fontSize:11,color:'#E8ECF4'}}/>
           <Area type="monotone" dataKey="体重" stroke="#6C9CFF" fill="url(#wg)" strokeWidth={2} dot={{r:3}}/>
-          <Area type="monotone" dataKey="7日平均" stroke="#A78BFA" fill="none" strokeWidth={2} strokeDasharray="4 4" dot={false}/>
+          <Area type="monotone" dataKey="14日平均" stroke="#A78BFA" fill="none" strokeWidth={2} strokeDasharray="4 4" dot={false}/>
         </AreaChart>
       </ResponsiveContainer>
     </div>}
 
     <div style={sC}>
-      <span style={{color:'var(--txt)',fontSize:13,fontWeight:700}}>今日の記録</span>
-      <div style={{display:'flex',gap:8,margin:'10px 0'}}>
+      <span style={{color:'var(--txt)',fontSize:13,fontWeight:700}}>体重を記録</span>
+      <div style={{margin:'10px 0 8px'}}>
+        <label style={{color:'var(--sub)',fontSize:10,display:'block',marginBottom:3}}>📅 記録日</label>
+        <input type="date" value={inputDate} onChange={e=>setInputDate(e.target.value)} style={sI}/>
+      </div>
+      <div style={{display:'flex',gap:8,margin:'0 0 8px'}}>
         <div style={{flex:2}}><label style={{color:'var(--sub)',fontSize:10,display:'block',marginBottom:3}}>体重 (kg)</label>
           <input type="number" step="0.1" placeholder="65.0" value={wt} onChange={e=>setWt(e.target.value)} style={sI}/></div>
         <div style={{flex:1}}><label style={{color:'var(--sub)',fontSize:10,display:'block',marginBottom:3}}>体脂肪 %</label>
@@ -132,7 +142,11 @@ export default function WeightScreen({ profile }: Props) {
         display:'flex',alignItems:'center',justifyContent:'center',padding:16}}
         onClick={()=>setEditingRec(null)}>
         <div style={{...sC,width:'100%',maxWidth:360,margin:0}} onClick={e=>e.stopPropagation()}>
-          <div style={{color:'var(--txt)',fontSize:15,fontWeight:700,marginBottom:12}}>{fmtShort(editingRec.date)} の体重を編集</div>
+          <div style={{color:'var(--txt)',fontSize:15,fontWeight:700,marginBottom:12}}>体重を編集</div>
+          <div style={{marginBottom:8}}>
+            <label style={{color:'var(--sub)',fontSize:10,display:'block',marginBottom:3}}>📅 記録日</label>
+            <input type="date" value={editDate} onChange={e=>setEditDate(e.target.value)} style={sI}/>
+          </div>
           <div style={{display:'flex',gap:8,marginBottom:12}}>
             <div style={{flex:2}}>
               <label style={{color:'var(--sub)',fontSize:10,display:'block',marginBottom:3}}>体重 (kg)</label>

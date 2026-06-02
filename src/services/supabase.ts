@@ -92,6 +92,17 @@ export async function remotePushExercise(userId: string, ex: Omit<Exercise, 'id'
   return data.id;
 }
 
+export async function remoteUpdateExercise(remoteId: number, changes: Partial<Exercise>): Promise<void> {
+  const m: Record<string, unknown> = {};
+  if (changes.date !== undefined) m.date = changes.date;
+  if (changes.activity !== undefined) m.activity = changes.activity;
+  if (changes.durationMin !== undefined) m.duration_min = changes.durationMin;
+  if (changes.mets !== undefined) m.mets = changes.mets;
+  if (changes.caloriesBurned !== undefined) m.calories_burned = changes.caloriesBurned;
+  const { error } = await supabase.from('exercises').update(m).eq('id', remoteId);
+  if (error) console.error('[Supabase] updateExercise:', error);
+}
+
 export async function remoteDeleteExercise(remoteId: number): Promise<void> {
   const { error } = await supabase.from('exercises').delete().eq('id', remoteId);
   if (error) console.error('[Supabase] deleteExercise:', error);

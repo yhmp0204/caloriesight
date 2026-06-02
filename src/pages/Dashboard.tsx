@@ -23,7 +23,7 @@ function Ring({pct,size=150,stroke=12,color,children}:{pct:number;size?:number;s
   </div>);
 }
 
-interface Props { profile: UserProfile; onNavigate: (tab: any) => void; }
+interface Props { profile: UserProfile; onNavigate: (tab: any, date?: string) => void; }
 
 export default function DashboardScreen({ profile, onNavigate }: Props) {
   const t = today();
@@ -178,7 +178,10 @@ export default function DashboardScreen({ profile, onNavigate }: Props) {
         </div>
         {wk.map((d,i) => (
           <div key={i} style={{display:'grid',gridTemplateColumns:'40px 1fr 1fr 1fr',gap:2,fontSize:11,padding:'3px 0',borderTop:'1px solid var(--bor)'}}>
-            <span style={{color:'var(--sub)',fontSize:10}}>{d.day}</span>
+            <button onClick={()=>onNavigate('meal',d.date)}
+              style={{background:'none',border:'none',cursor:'pointer',color:'var(--pri)',fontSize:10,padding:0,textAlign:'left',textDecoration:'underline'}}>
+              {d.day}
+            </button>
             <span style={{textAlign:'right',color:'var(--warn)',fontWeight:600}}>{d.摂取}</span>
             <span style={{textAlign:'right',color:'var(--ok)',fontWeight:600}}>{d.消費}</span>
             <span style={{textAlign:'right',fontWeight:700,color:d.差分<=0?'var(--ok)':'var(--err)'}}>
